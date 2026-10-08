@@ -67,6 +67,7 @@ public final class YTMWebController {
     private volatile WebSocket webSocket;
     private int reconnectAttempts = 0;
     private volatile YTMState lastState;
+    private volatile boolean firstStateLogged = false;
 
     private YTMWebController(String bridgeUrl) {
         this.bridgeUrl = bridgeUrl;
@@ -155,6 +156,12 @@ public final class YTMWebController {
                     getAsString(obj, "videoId", ""),
                     getAsString(obj, "albumArt", ""));
             this.lastState = state;
+            if (firstStateLogged == false) {
+                firstStateLogged = true;
+                log.info("First YTM state received: {} - {} [{}]",
+                        state.title, state.artist,
+                        state.playing ? "playing" : "paused");
+            }
             List<YTMStateListener> snapshot = snapshotListeners();
             for (YTMStateListener l : snapshot) {
                 try { l.onStateChanged(state); } catch (Exception ignored) {}

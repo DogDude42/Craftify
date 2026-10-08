@@ -5,7 +5,8 @@
   "description": "Relays YouTube Music player state and controls to the Craftify Minecraft mod via the native bridge",
   "permissions": [
     "nativeMessaging",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "*://music.youtube.com/*"

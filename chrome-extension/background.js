@@ -93,6 +93,25 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   }
 });
 
+// ---- periodic state poll ----
+// The SW is event-driven; if the YTM tab was already open with no DOM
+// mutations (paused, static page), no state would ever reach the mod.
+// Poll every 2s while any YTM tab exists. chrome.alarms keeps this running
+// even if the SW is suspended between events.
+const POLL_ALARM = "craftify-ytm-poll";
+try {
+  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 0.05 }); // ~3s (min granularity)
+} catch (e) {
+  WARN("alarm create failed:", e);
+}
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === POLL_ALARM) requestStateFromAllTabs();
+});
+
+// Belt-and-braces: a plain interval too (runs while SW alive; the alarm
+// covers SW restarts)
+setInterval(() => requestStateFromAllTabs(), 2000);
+
 chrome.runtime.onStartup.addListener(() => LOG("extension starting up"));
 chrome.runtime.onInstalled.addListener(() => LOG("extension installed/updated"));
 
