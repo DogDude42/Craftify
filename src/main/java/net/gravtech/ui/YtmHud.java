@@ -20,21 +20,22 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * Craftify player HUD for MC 26.1.2.
  *
- *  - Album art via the player-bar <img> URL -> center-cropped square ->
- *    DynamicTexture -> innerBlit with CORRECT UVs (regionW/regionH = texW/texH)
- *  - Sub-second timekeeping: position comes from the extension in
- *    milliseconds, so the clock doesn't skip when updates arrive late
- *  - Scalable text: everything inside the panel renders under a pose scale
- *    (auto-fit factor from widget size), so a small widget still fits
- *  - Layout: [art | icon+title / artist / time ... bar] - time sits directly
- *    above the seek bar, right-aligned
- *  - Draggable + resizable (persisted), hover controls with correct
- *    play/pause action glyphs, Catppuccin Mocha + configurable accent
+ *  - Album art: extension re-encodes the thumbnail to PNG in-page (canvas),
+ *    because ytimg serves webp to Chrome which stb_image can't decode.
+ *    Mod falls back to direct URL fetch for jpeg thumbs.
+ *  - Sub-second ms clock (true <video> currentTime, extrapolated in ms)
+ *  - Scalable text: panel interior renders under pose scale (auto from h)
+ *  - Layout: [art | icon+title(marquee) / info lines (wrap down) / time
+ *    above bar]; seek bar spans the TEXT zone only - never overlaps art
+ *  - Resizing freezes the layout (controls hidden) for a stable preview
+ *  - Drag anywhere; resize grip bottom-right; geometry persisted + self-healed
  */
 public final class YtmHud {
 
@@ -43,7 +44,7 @@ public final class YtmHud {
     private static final Identifier ALBUM_TEX_ID =
             Identifier.fromNamespaceAndPath(Craftify.MOD_ID, "ytm_album_art");
 
-    // ---- Catppuccin Mocha base palette (accent comes from config) ----
+    // ---- Catppuccin Mocha base palette (accent from config) ----
     private static final int COLOR_BG            = 0xF01E1E2E;
     private static final int COLOR_BG_HOVER     = 0xF0181825;
     private static final int COLOR_TITLE        = 0xFFCDD6F4;
@@ -52,6 +53,11 @@ public final class YtmHud {
     private static final int COLOR_BUTTON_HOVER = 0xFF585B70;
     private static final int COLOR_BUTTON_TEXT  = 0xFFCDD6F4;
 
+    private static final int MIN_W = 150;
+    private static final int MIN_H = 48;
+    private static final int LINE_H = 10;
+    private static final int CONTROLS_H = 20;
+
     // interaction state
     private static boolean hovered;
     private static boolean dragging;
@@ -59,7 +65,6 @@ public final class YtmHud {
     private static double dragOffX, dragOffY;
     /** Clicks are consumed ONLY on frames where the widget actually drew. */
     private static volatile boolean drewLastFrame;
-
     /** Session-only hide toggle (H keybind). */
     private static boolean hiddenBySession = false;
 
@@ -106,7 +111,6 @@ public final class YtmHud {
             return;
         }
 
-        // Sub-second-smooth position: extrapolate in ms since last update
         YTMState state = advancePosition(raw);
 
         Window window = mc.getWindow();
@@ -133,76 +137,97 @@ public final class YtmHud {
             g.outline(x, y, w, h, accent);
         }
 
-        // ---------------------------------------------------------------
-        // Everything inside the panel renders under a uniform scale factor
-        // so the text shrinks/grows with the widget and always fits.
-        // Layout constants are defined for a 1.0-scale 12-line font.
-        // ---------------------------------------------------------------
+        // ---- everything inside renders under a uniform scale ----
         float scale = computeScale(h);
         Font font = mc.font;
 
         g.pose().pushMatrix();
         g.pose().scale(scale, scale);
-        // translate to the panel origin, in pre-scale coordinates
         int sw = Math.round(w / scale);
         int sh = Math.round(h / scale);
         g.pose().translate(x / scale, y / scale);
 
         int pad = 4;
-        int showControlsH = (hovered && cfg.showControls) ? 20 : 0;
-        int artSize = sh - pad * 2 - showControlsH;
+        // Resizing freezes the layout: controls hidden, art keeps full height
+        boolean showCtrls = hovered && cfg.showControls && !resizing;
+        int controlsH = showCtrls ? CONTROLS_H : 0;
+        int artSize = sh - pad * 2 - controlsH;
         boolean showArt = cfg.showAlbumArt && artSize >= 12;
 
         // ---- album art ----
         if (showArt) {
             ensureAlbumArt(state);
             if (textureRegistered) {
-                blitAlbumArt(g, x, y, pad, artSize, scale);
+                // blit(pipeline, id, x, y, u, v, uW, uH, texW, texH, regionW, regionH):
+                // region = full texture; drawn region is (pad,pad)-(pad+artSize,pad+artSize)
+                g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
+                        pad, pad,
+                        0.0f, 0.0f,
+                        artTexW, artTexH,
+                        artTexW, artTexH,
+                        artSize, artSize);
             } else {
                 g.fill(pad, pad, pad + artSize, pad + artSize, COLOR_BUTTON);
                 g.text(font, "\u266B", pad + artSize / 2 - 3, pad + artSize / 2 - 4, COLOR_ARTIST);
             }
         }
 
-        // ---- text block ----
-        int textX = pad + (showArt ? artSize + 5 : 0);
+        // ---- text zone geometry (declared BEFORE use) ----
+        int textLeft = showArt ? pad + artSize + 5 : pad;
         int textRight = sw - pad;
+        int textW = textRight - textLeft;
 
-        // line 1: state icon + title
-        String icon = state.playing ? "\u25B6" : "\u23F8";
-        int iconW = font.width(icon);
-        g.text(font, icon, textX, pad, accent);
-        String title = truncate(font, state.title, textRight - textX - iconW - 3);
-        g.text(font, title, textX + iconW + 3, pad, COLOR_TITLE);
+        // seek bar sits directly above the controls row (or the bottom pad)
+        int barY = sh - controlsH - 8;
+        int barX = textLeft;
+        int barW = Math.max(0, sw - pad - textLeft);
 
-        // line 2: artist
-        String artist = truncate(font, state.artist, textRight - textX);
-        g.text(font, artist, textX, pad + 11, COLOR_ARTIST);
-
-        // line 3: time - directly above the seek bar, right-aligned
-        int barY = sh - showControlsH - 8; // 2px bar, 6px above it the time
-        String time = fmtMs(state.positionMs) + " / " + fmtMs(state.durationMs);
-        int timeW = font.width(time);
-        g.text(font, time, textRight - timeW, barY - 11, accent);
-
-        // ---- seek bar ----
+        // ---- seek bar (spans TEXT zone only - never under the art) ----
         if (state.durationMs > 0) {
-            int barX = pad;
-            int barW = sw - pad * 2;
             g.fill(barX, barY, barX + barW, barY + 2, COLOR_BUTTON);
             double frac = (double) state.positionMs / (double) state.durationMs;
             int fillW = (int) (barW * Math.min(1.0, Math.max(0.0, frac)));
             g.fill(barX, barY, barX + Math.max(fillW, 1), barY + 2, accent);
         }
 
-        // ---- hover controls ----
-        if (hovered && cfg.showControls) {
+        // ---- time: directly above the bar, right-aligned ----
+        String time = fmtMs(state.positionMs) + " / " + fmtMs(state.durationMs);
+        int timeW = font.width(time);
+        g.text(font, time, textRight - timeW, barY - 11, accent);
+
+        // ---- line 1: state icon + scrolling title ----
+        String icon = state.playing ? "\u25B6" : "\u23F8";
+        int iconW = font.width(icon);
+        g.text(font, icon, textLeft, pad, accent);
+        drawScrollingText(g, font, state.title,
+                textLeft + iconW + 3, pad, textRight - textLeft - iconW - 3, COLOR_TITLE);
+
+        // ---- info lines: artist / album / extra parts, wrapping down ----
+        List<String> infoLines = splitInfoLines(state.artist, state.album);
+        int nextY = pad + LINE_H + 1;
+        int maxY = barY - 11 - 1; // stay above the time line
+        for (String line : infoLines) {
+            if (line == null || line.isEmpty()) continue;
+            String remaining = line;
+            while (!remaining.isEmpty() && nextY + LINE_H <= maxY) {
+                String chunk = fitText(font, remaining, textW);
+                g.text(font, chunk, textLeft, nextY, COLOR_ARTIST);
+                remaining = chunk.endsWith("...")
+                        ? "" // truncated: don't keep wrapping the ellipsis
+                        : remaining.substring(chunk.length()).trim();
+                nextY += LINE_H;
+                if (remaining.isEmpty()) break;
+            }
+            if (nextY + LINE_H > maxY) break;
+        }
+
+        // ---- hover controls (hidden while resizing) ----
+        if (showCtrls) {
             int btnH = 14, btnW = 16, gap = 6;
             int totalW = btnW * 3 + gap * 2;
             int bx = (sw - totalW) / 2;
             int by = sh - btnH - pad;
 
-            // convert mouse to pre-scale coords for hit tests
             int msX = round6((mouseX - x) / scale);
             int msY = round6((mouseY - y) / scale);
 
@@ -213,15 +238,15 @@ public final class YtmHud {
                     state.playing ? "\u23F8" : "\u25B6",
                     in(msX, msY, pbx, by, btnW, btnH));
             int nbx = bx + (btnW + gap) * 2;
-            drawBtn(g, font, pbx + 0 * gap, by, btnW, btnH, "",
-                    false); // keep parity - no-op
             drawBtn(g, font, nbx, by, btnW, btnH, "\u23ED",
                     in(msX, msY, nbx, by, btnW, btnH));
+        }
 
-            // resize grip (drawn in pre-scale space near bottom-right)
+        // resize grip (always visible on hover, even while resizing)
+        if (hovered) {
             g.fill(sw - 9, sh - 9, sw - 7, sh - 7, 0x90FFFFFF);
             g.fill(sw - 9, sh - 6, sw - 4, sh - 4, 0x90FFFFFF);
-            g.fill(sw - -controlsGripW(), sh - 3, sw - 2, sh - 2, 0x90FFFFFF);
+            g.fill(sw - 6, sh - 3, sw - 2, sh - 2, 0x90FFFFFF);
         }
 
         g.pose().popMatrix();
@@ -240,17 +265,11 @@ public final class YtmHud {
         if (dragging || resizing) CraftifyConfig.save();
     }
 
-    private static final int MIN_W = 150;
-    private static final int MIN_H = 48;
+    // ---------------------------------------------------------------- layout helpers
 
-    private static int controlsGripW() {
-        return 7;
-    }
-
-    /** Auto-fit scale: h=68 -> 1.0, taller -> up to 1.5x, shorter -> down to 0.5x. */
+    /** h=68 -> 1.0 scale; clamped 0.5..1.5. */
     private static float computeScale(int h) {
-        float s = h / 68.0f;
-        return clampF(s, 0.5f, 1.5f);
+        return clampF(h / 68.0f, 0.5f, 1.5f);
     }
 
     private static float clampF(float v, float min, float max) {
@@ -262,24 +281,58 @@ public final class YtmHud {
     }
 
     /**
-     * Draw the album art with correct UV mapping: blit the full texture into
-     * a square region. Uses the 13-arg inner overload via the public API:
-     * blit(pipeline, id, x, y, u, v, w, h, texW, texH, regionW, regionH)
-     * where region = full texture and w,h = drawn size, or the simple
-     * 9-arg blit when the texture is exactly the drawn size.
+     * Split YTM's "artist • album • year" subtitle into separate info lines.
      */
-    private static void blitAlbumArt(GuiGraphicsExtractor g, int x, int y,
-                                     int pad, int artSize, float scale) {
-        // we are inside the scaled pose; drawn region is (pad,pad,artSize,artSize)
-        g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
-                pad, pad,                 // screen x,y (scaled space)
-                0.0f, 0.0f,               // u,v offset
-                artTexW, artTexH,          // w,h of texture region (full)
-                artTexW, artTexH,          // texture dims
-                artSize, artSize);         // drawn size (scales down)
-        // NOTE: verified overload blit(RenderPipeline, Identifier, int x,
-        // int y, float u, float v, int uWidth, int uHeight, int texW,
-        // int texH, int regionW, int regionH) exists in 26.1.2
+    private static List<String> splitInfoLines(String artist, String album) {
+        List<String> lines = new ArrayList<>();
+        String sub = artist == null ? "" : artist.trim();
+        String[] parts = sub.split("\\s*\\u2022\\s*|\\s*\u2022\\s*");
+        if (parts.length == 0 || (parts.length == 1 && parts[0].isEmpty())) {
+            if (album != null && !album.isEmpty()) lines.add(album.trim());
+            return lines;
+        }
+        for (String p : parts) {
+            if (p != null && !p.isEmpty()) lines.add(p.trim());
+        }
+        if (album != null && !album.isEmpty()) {
+            boolean have = lines.stream().anyMatch(l -> l.equals(album.trim()));
+            if (!have) lines.add(album.trim());
+        }
+        return lines;
+    }
+
+    /** Marquee-scroll text that doesn't fit; static when it does. Scissor-clipped. */
+    private static void drawScrollingText(GuiGraphicsExtractor g, Font font,
+                                          String text, int x, int y, int maxW, int color) {
+        if (maxW <= 4) return;
+        if (text == null) text = "";
+        if (font.width(text) <= maxW) {
+            g.text(font, text, x, y, color);
+            return;
+        }
+        // scroll sequence = text + gap, advancing ~8px/s, looping
+        String seq = text + "     ";
+        int seqW = font.width(seq);
+        int offset = (int) ((System.currentTimeMillis() / 125L) % seqW);
+
+        // scissor to the title box so the scroll never bleeds outside
+        g.enableScissor(x, y - 1, x + maxW, y + LINE_H);
+        // draw the sequence twice, offset-advancing, to cover the whole box
+        g.text(font, seq, x - offset, y, color);
+        if (offset + maxW > seqW) {
+            g.text(font, seq, x - offset + seqW, y, color);
+        }
+        g.disableScissor();
+    }
+
+    /** Longest prefix of s that fits maxW (adds ellipsis when truncated). */
+    private static String fitText(Font font, String s, int maxW) {
+        if (font.width(s) <= maxW) return s;
+        String ell = "...";
+        while (s.length() > 0 && font.width(s + ell) > maxW) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s + ell;
     }
 
     private static void drawBtn(GuiGraphicsExtractor g, Font font,
@@ -307,7 +360,8 @@ public final class YtmHud {
         }
 
         YTMWebController controller = Craftify.getYtmController();
-        if (controller != null && hovered && cfg.showControls) {
+        boolean showCtrls = hovered && cfg.showControls && !resizing;
+        if (controller != null && showCtrls) {
             float scale = computeScale(h);
             int sw = round6(w / scale);
             int sh = round6(h / scale);
@@ -350,10 +404,31 @@ public final class YtmHud {
     // ---------------------------------------------------------------- album art
 
     private static void ensureAlbumArt(YTMState state) {
+        // Prefer the extension's canvas-re-encoded PNG data URL (ytimg serves
+        // webp to Chrome, which NativeImage/stb_image cannot decode). Fall
+        // back to a direct fetch of the raw URL (jpeg thumbs decode fine).
+        String png = state.albumArtPng;
         String url = state.albumArt;
-        if (url.isEmpty() || url.equals(loadedArtUrl)) return;
-        loadedArtUrl = url;
+        String key = !png.isEmpty() ? png : url;
+        if (key.isEmpty() || key.equals(loadedArtUrl)) return;
+        loadedArtUrl = key;
         textureRegistered = false;
+
+        if (!png.isEmpty()) {
+            int comma = png.indexOf(',');
+            if (comma > 0) {
+                try {
+                    byte[] bytes = java.util.Base64.getDecoder()
+                            .decode(png.substring(comma + 1));
+                    NativeImage img = NativeImage.read(bytes);
+                    Minecraft.getInstance().execute(() -> registerArt(img));
+                } catch (Exception e) {
+                    Craftify.LOGGER.warn("album art png decode failed: {}",
+                            String.valueOf(e));
+                }
+            }
+            return;
+        }
 
         CompletableFuture.runAsync(() -> {
             try {
@@ -361,29 +436,29 @@ public final class YtmHud {
                         HttpRequest.newBuilder(URI.create(url)).build(),
                         HttpResponse.BodyHandlers.ofByteArray());
                 if (resp.statusCode() / 100 != 2) return;
-                NativeImage img = NativeImage.read(resp.body());
-                NativeImage square = centerCropSquare(img);
-                Minecraft.getInstance().execute(() -> {
-                    try {
-                        Minecraft.getInstance().getTextureManager().release(ALBUM_TEX_ID);
-                        Minecraft.getInstance().getTextureManager()
-                                .register(ALBUM_TEX_ID,
-                                        new DynamicTexture(() -> "craftify-album-art", square));
-                        artTexW = square.getWidth();
-                        artTexH = square.getHeight();
-                        textureRegistered = true;
-                    } catch (Exception e) {
-                        Craftify.LOGGER.warn("album art register failed: {}",
-                                String.valueOf(e));
-                    }
-                });
+                NativeImage square = centerCropSquare(NativeImage.read(resp.body()));
+                Minecraft.getInstance().execute(() -> registerArt(square));
             } catch (Exception e) {
                 Craftify.LOGGER.warn("album art fetch failed: {}", String.valueOf(e));
             }
         });
     }
 
-    /** Crop an image to a centered square (youtube thumbs are 16:9 letterboxed). */
+    private static void registerArt(NativeImage square) {
+        try {
+            Minecraft.getInstance().getTextureManager().release(ALBUM_TEX_ID);
+            Minecraft.getInstance().getTextureManager()
+                    .register(ALBUM_TEX_ID,
+                            new DynamicTexture(() -> "craftify-album-art", square));
+            artTexW = square.getWidth();
+            artTexH = square.getHeight();
+            textureRegistered = true;
+        } catch (Exception e) {
+            Craftify.LOGGER.warn("album art register failed: {}", String.valueOf(e));
+        }
+    }
+
+    /** Crop an image to a centered square (yt thumbs are 16:9 letterboxed). */
     private static NativeImage centerCropSquare(NativeImage img) {
         int w = img.getWidth();
         int h = img.getHeight();
@@ -413,7 +488,7 @@ public final class YtmHud {
         double advanced = s.positionMs + elapsedMs;
         if (s.durationMs > 0 && advanced > s.durationMs) advanced = s.durationMs;
         return new YTMState(s.playing, s.title, s.artist, s.album,
-                s.durationMs, (long) advanced, s.videoId, s.albumArt);
+                s.durationMs, (long) advanced, s.videoId, s.albumArt, s.albumArtPng);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -424,16 +499,6 @@ public final class YtmHud {
 
     private static int clamp(int v, int min, int max) {
         return Math.max(min, Math.min(max, v));
-    }
-
-    private static String truncate(Font font, String s, int maxWidth) {
-        if (s == null) s = "";
-        if (font.width(s) <= maxWidth) return s;
-        String ellipsis = "...";
-        while (s.length() > 0 && font.width(s + ellipsis) > maxWidth) {
-            s = s.substring(0, s.length() - 1);
-        }
-        return s + ellipsis;
     }
 
     private static String fmtMs(long ms) {

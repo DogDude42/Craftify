@@ -3,6 +3,36 @@
   window.__craftifyYtmInjected = true;
 
   const PLAYER_URL_RE = /^https:\/\/music\.youtube\.com\//;
+  let lastArtConverted = "";
+  let lastArtPng = "";
+
+  async function convertArtToPng(url) {
+    try {
+      const resp = await fetch(url, { mode: "cors" });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      const bmp = await createImageBitmap(blob);
+      // center-crop to square here so the mod gets square pixels directly
+      const side = Math.min(bmp.width, bmp.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = side; canvas.height = side;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bmp,
+          (bmp.width - side) / 2, (bmp.height - side) / 2, side, side,
+          0, 0, side, side);
+      return await new Promise((resolve) => {
+        canvas.toBlob((b) => {
+          if (!b) return resolve(null);
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result);
+          fr.onerror = () => resolve(null);
+          fr.readAsDataURL(b);
+        }, "image/png");
+      });
+    } catch (e) {
+      return null;
+    }
+  }
 
   function q(sel) { return document.querySelector(sel); }
 
@@ -27,16 +57,30 @@
     if (albumEl) album = albumEl.textContent.trim();
 
     let duration = 0, position = 0;
-    // The HTML5 <video> element gives TRUE sub-second currentTime/duration -
-    // the .time-info text only has seconds, which made the HUD clock skip.
-    const video = q("video");
+    // The player's <video> gives TRUE sub-second currentTime/duration.
+    // IMPORTANT: YTM has several <video> elements in the DOM (previews,
+    // miniplayer stubs). The player's one lives inside <ytmusic-player>
+    // (or is the only one with a real, finite, non-zero duration AND
+    // currentSrc). Picking document's first <video> previously returned
+    // a PREVIEW's timeline (user saw 4:41/6:47 while playing 1:33/4:07).
+    const playerEl = q("ytmusic-player video") || q("video");
+    let video = null;
+    document.querySelectorAll("video").forEach(v => {
+      const dur = parseFloat(v.duration);
+      if (!v.paused && !isNaN(dur) && dur > 1 && isFinite(dur)) video = v;
+    });
+    if (!video && playerEl) {
+      const dur = parseFloat(playerEl.duration);
+      if (!isNaN(dur) && dur > 1 && isFinite(dur)) video = playerEl;
+    }
     if (video) {
       const cur = parseFloat(video.currentTime);
       const dur = parseFloat(video.duration);
-      if (!isNaN(cur) && cur > 0) position = cur;
+      if (!isNaN(cur) && cur >= 0) position = cur;
       if (!isNaN(dur) && dur > 0 && isFinite(dur)) duration = dur;
     }
-    if (!duration || !position) {
+    // sanity + fallback to the seconds-granular text
+    if (!duration || duration > 3600 || (position && position > duration)) {
       const timeInfo = q("ytmusic-player-bar .time-info");
       if (timeInfo) {
         const m = timeInfo.textContent.match(/(\d+:\d+(?::\d+)?)/g);
@@ -58,8 +102,7 @@
                 q("ytmusic-player-page")?.getAttribute("video-id") || "";
     }
 
-    // Album art: try the player bar's actual <img> first (most reliable -
-    // it's the real art YTM displays), then videoId-based thumbnail.
+    // Album art URL (for the mod's direct fetch fallback).
     let albumArt = "";
     try {
       const barArt = q("ytmusic-player-bar img#img") ||
@@ -73,6 +116,17 @@
       albumArt = "https://i.ytimg.com/vi/" + videoId + "/maxresdefault.jpg";
     }
 
+    // Convert art to a PNG data URL in-page: ytimg serves Chrome webp,
+    // which the mod's NativeImage (stb_image) cannot decode ("Bad PNG
+    // Signature"). The canvas re-encodes to PNG the mod can always read.
+    // Async - the albumArtData arrives with the NEXT state push (~1-3s).
+    if (albumArt && albumArt !== lastArtConverted) {
+      lastArtConverted = albumArt;
+      convertArtToPng(albumArt).then(dataUrl => {
+        if (dataUrl) lastArtPng = dataUrl;
+      }).catch(() => {});
+    }
+
     return {
       type: "state",
       state: {
@@ -80,7 +134,8 @@
         duration, position,               // seconds (legacy)
         positionMs: Math.round(position * 1000),
         durationMs: Math.round(duration * 1000),
-        videoId, albumArt
+        videoId, albumArt,
+        albumArtPng: lastArtPng
       }
     };
   }
