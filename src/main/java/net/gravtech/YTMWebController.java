@@ -100,6 +100,7 @@ public final class YTMWebController {
             @Override
             public void onOpen(WebSocket ws) {
                 webSocket = ws;
+                partial = null;
                 reconnectAttempts = 0;
                 log.info("Connected to Chrome/Thorium YTM bridge at {}", bridgeUrl);
                 notifyConnected();
@@ -107,9 +108,26 @@ public final class YTMWebController {
                 ws.request(1);
             }
 
+            private StringBuilder partial = null;
+
             @Override
             public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
-                parseState(data.toString());
+                // Large messages (album art data URLs are 100s of KB) arrive
+                // SPLIT across many frames. Only parse once the final frame
+                // (last==true) lands; previously every fragment was parsed as
+                // a complete message -> JsonSyntaxException on every state.
+                if (last) {
+                    if (partial == null) {
+                        parseState(data.toString());
+                    } else {
+                        partial.append(data);
+                        parseState(partial.toString());
+                        partial = null;
+                    }
+                } else {
+                    if (partial == null) partial = new StringBuilder();
+                    partial.append(data);
+                }
                 ws.request(1);
                 return null;
             }

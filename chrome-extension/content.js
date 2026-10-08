@@ -6,7 +6,8 @@
   let lastArtConverted = "";
   let lastArtPng = "";
 
-  const ART_CAP = 640; // plenty for HUD sizes; keeps the data URL compact
+  const ART_CAP = 256; // HUD art is drawn small; 256px is sharp enough
+  // and keeps the data URL tiny (~10-20KB as JPEG).
 
   async function artFromUrl(url) {
     const resp = await fetch(url, { mode: "cors" });
@@ -48,13 +49,16 @@
         Math.min(bmp.width, bmp.height), Math.min(bmp.width, bmp.height),
         0, 0, side, side);
     return await new Promise((resolve) => {
+      // JPEG, not PNG: photos compress ~10x smaller and the mod's stb_image
+      // decodes JPEG natively (webp was the only undecodable format).
+      // The wire field is still named albumArtPng for compatibility.
       canvas.toBlob((b) => {
         if (!b) return resolve(null);
         const fr = new FileReader();
         fr.onload = () => resolve(fr.result);
         fr.onerror = () => resolve(null);
         fr.readAsDataURL(b);
-      }, "image/png");
+      }, "image/jpeg", 0.85);
     });
   }
 
