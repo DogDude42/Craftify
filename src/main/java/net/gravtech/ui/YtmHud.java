@@ -53,6 +53,10 @@ public final class YtmHud {
     private static boolean dragging;
     private static boolean resizing;
     private static double dragOffX, dragOffY;
+    /** True only on frames where the widget actually drew. Clicks are
+     *  consumed ONLY when this is true, so an invisible HUD can never
+     *  eat screen clicks. */
+    private static volatile boolean drewLastFrame;
 
     // album art
     private static volatile String loadedArtUrl = "";
@@ -87,15 +91,23 @@ public final class YtmHud {
         CraftifyClient.handleKeybinds();
 
         CraftifyConfig cfg = CraftifyConfig.get();
+        drewLastFrame = false;
         if (!cfg.enabled || hiddenBySession) return;
         if (cfg.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER) return;
 
         YTMWebController controller = Craftify.getYtmController();
         YTMState raw = controller == null ? null : controller.lastState();
-        // ALWAYS still needs *something* to show; without a state we have
-        // nothing to render, so return. (Without a bridge there's no art,
-        // title or bar - an empty box would be worse than nothing.)
-        if (raw == null) return;
+        if (raw == null) {
+            // Bridge may be connected but the extension has not pushed any
+            // state (no YTM tab open / stale SW). Show a small non-interactive
+            // hint instead of nothing, so the user knows the mod is alive.
+            if (controller != null && controller.isConnected()) {
+                g.fill(cfg.widgetX, cfg.widgetY, cfg.widgetX + 110, cfg.widgetY + 14, 0xD01E1E2E);
+                g.text(mc.font, "YTM: waiting for browser...",
+                        cfg.widgetX + 4, cfg.widgetY + 3, COLOR_ARTIST);
+            }
+            return; // NOTE: drewLastFrame stays false -> no click consumption
+        }
 
         // Interpolate the play position: state updates arrive every ~2-3s,
         // but the song keeps playing between them. Extrapolate from the
@@ -109,7 +121,17 @@ public final class YtmHud {
         int x = cfg.widgetX, y = cfg.widgetY, w = cfg.widgetW, h = cfg.widgetH;
         int accent = cfg.accentRgb();
 
+        // Self-heal geometry: a previous stuck-resize could have saved
+        // extreme sizes; clamp to the current window every frame.
+        w = clamp(w, 170, Math.max(171, window.getGuiScaledWidth() - 10));
+        h = clamp(h, 56, Math.max(57, window.getGuiScaledHeight() - 10));
+        cfg.widgetW = w;
+        cfg.widgetH = h;
+        cfg.widgetX = x = clamp(x, 0, Math.max(0, window.getGuiScaledWidth() - w));
+        cfg.widgetY = y = clamp(y, 0, Math.max(0, window.getGuiScaledHeight() - h));
+
         hovered = in(mouseX, mouseY, x, y, w, h);
+        drewLastFrame = true;
 
         // background
         g.fill(x, y, x + w, y + h, hovered ? COLOR_BG_HOVER : COLOR_BG);
@@ -214,6 +236,10 @@ public final class YtmHud {
     // ---------------------------------------------------------------- interaction
 
     public static boolean onMouseClicked(double mouseX, double mouseY, int button) {
+        // Only ever consume clicks when the widget is actually on screen.
+        // (Render gate and click gate MUST match - previously an invisible
+        // HUD with a huge saved geometry ate clicks across most of the screen.)
+        if (!drewLastFrame) return false;
         CraftifyConfig cfg = CraftifyConfig.get();
         if (!cfg.enabled || hiddenBySession) return false;
         if (cfg.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER) return false;

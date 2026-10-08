@@ -97,6 +97,7 @@ public final class YTMWebController {
                 reconnectAttempts = 0;
                 log.info("Connected to Chrome/Thorium YTM bridge at {}", bridgeUrl);
                 notifyConnected();
+                requestState();
                 ws.request(1);
             }
 
@@ -192,6 +193,27 @@ public final class YTMWebController {
     /** Most recent state pushed by the extension (null if none yet). */
     public YTMState lastState() {
         return lastState;
+    }
+
+    /** True if the WebSocket to the bridge is currently open. */
+    public boolean isConnected() {
+        WebSocket ws = webSocket;
+        return ws != null && !ws.isOutputClosed();
+    }
+
+    /** Ask the bridge/extension to push a fresh state right now.
+     *  Sent on connect; the bridge relays it to the extension, which
+     *  polls the YTM tab. */
+    public void requestState() {
+        JsonObject json = new JsonObject();
+        json.addProperty("action", "request-state");
+        WebSocket ws = webSocket;
+        if (ws != null) {
+            try {
+                ws.sendText(gson.toJson(json), true);
+            } catch (IllegalStateException ignored) {
+            }
+        }
     }
 
     public void addListener(YTMStateListener listener) {

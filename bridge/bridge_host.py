@@ -102,6 +102,17 @@ class Bridge:
                 except json.JSONDecodeError:
                     continue
                 print(f"[bridge] mod -> extension: {cmd}", file=sys.stderr)
+                if cmd.get("action") == "request-state":
+                    # Mod wants fresh state NOW (e.g. just connected).
+                    # Two paths: replay the last known state immediately,
+                    # AND nudge the extension to push fresh state.
+                    if self.last_state:
+                        try:
+                            await ws.send(json.dumps(self.last_state))
+                        except Exception:
+                            pass
+                    self.send_native_message({"type": "request-state"})
+                    continue
                 # Forward command to Chrome via native messaging
                 self.send_native_message({"type": "command", "command": cmd})
         except Exception as e:

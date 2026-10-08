@@ -26,6 +26,8 @@ function connectNative() {
     LOG("native -> extension:", msg);
     if (msg && msg.type === "command") {
       forwardCommandToYtm(msg.command);
+    } else if (msg && msg.type === "request-state") {
+      requestStateFromAllTabs();
     }
   });
 
