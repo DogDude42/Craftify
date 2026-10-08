@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "craftify-ytm-web",
+  "version": "${version}",
+  "name": "Craftify - Chrome/Thorium YTM",
+  "description": "YouTube Music web control via Chrome/Thorium for Minecraft Fabric 26.1.2",
+  "contact": {
+    "homepage": "https://github.com/DogDude42/Craftify"
+  },
+  "license": "MIT",
+  "icon": "assets/logo.png",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "net.gravtech.Craftify"
+    ],
+    "client": [
+      "net.gravtech.CraftifyClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric": ">=26.1.2",
+    "minecraft": "~26.1.2",
+    "java": ">=8"
+  },
+  "mixins": [
+    "craftify.mixins.json"
+  ]
+}
