@@ -36,8 +36,17 @@
         if (m[1]) duration = parseTime(m[1]);
       }
     }
-    const videoId = new URL(location.href).searchParams.get("v") ||
-                    q("ytmusic-player-page")?.getAttribute("video-id") || "";
+    let videoId = "";
+    try {
+      const playerPage = q("ytmusic-player-page");
+      const pr = playerPage && (playerPage.data || playerPage.__data);
+      videoId = (pr && pr.playerResponse && pr.playerResponse.videoDetails
+                 && pr.playerResponse.videoDetails.videoId) || "";
+    } catch (e) { /* best-effort */ }
+    if (!videoId) {
+      videoId = new URL(location.href).searchParams.get("v") ||
+                q("ytmusic-player-page")?.getAttribute("video-id") || "";
+    }
 
     return {
       type: "state",
@@ -75,6 +84,11 @@
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg && msg.type === "craftify-ytm-get-state") {
+      sendResponse({ ok: true });
+      sendState();
+      return;
+    }
     if (msg && msg.type === "craftify-ytm-command") {
       const action = msg.command && msg.command.action;
       const fn = COMMANDS[action];

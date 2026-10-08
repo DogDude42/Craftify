@@ -1,46 +1,78 @@
 // Craftify YTM Bridge - service worker
-// Manages the native messaging port and routes state/command messages
-// between the content script (music.youtube.com) and the bridge host.
+// Routes state/command messages between music.youtube.com and the native host.
+// Verbose logging on purpose: the console should show the full chain.
+
+const NATIVE_NAME = "com.dogdude42.craftify_ytm_bridge";
+const LOG = (...a) => console.log("[craftify]", ...a);
+const WARN = (...a) => console.warn("[craftify]", ...a);
 
 let nativePort = null;
+let connectAttempts = 0;
 
 function connectNative() {
   if (nativePort) return;
+  connectAttempts++;
+  LOG(`connecting to native host "${NATIVE_NAME}" (attempt ${connectAttempts})...`);
   try {
-    nativePort = chrome.runtime.connectNative("com.dogdude42.craftify_ytm_bridge");
-    nativePort.onMessage.addListener((msg) => {
-      // Message from the bridge (i.e. Minecraft mod command)
-      if (msg && msg.type === "command") {
-        forwardCommandToYtm(msg.command);
-      }
-    });
-    nativePort.onDisconnect.addListener(() => {
-      console.warn("[craftify] native host disconnected:",
-                   chrome.runtime.lastError && chrome.runtime.lastError.message);
-      nativePort = null;
-      // Retry after a delay; the host may just not be running yet
-      setTimeout(connectNative, 5000);
-    });
+    nativePort = chrome.runtime.connectNative(NATIVE_NAME);
   } catch (e) {
-    console.error("[craftify] connectNative failed:", e);
+    WARN("connectNative threw:", e);
+    nativePort = null;
+    setTimeout(connectNative, 5000);
+    return;
+  }
+
+  nativePort.onMessage.addListener((msg) => {
+    LOG("native -> extension:", msg);
+    if (msg && msg.type === "command") {
+      forwardCommandToYtm(msg.command);
+    }
+  });
+
+  nativePort.onDisconnect.addListener(() => {
+    const err = chrome.runtime.lastError;
+    WARN("native host DISCONNECTED:", err && err.message);
+    nativePort = null;
+    setTimeout(connectNative, 5000);
+  });
+
+  LOG("native port opened OK - bridge should now be running");
+  // Ask the YTM tab(s) for fresh state so the bridge/mod start up-to-date
+  requestStateFromAllTabs();
+}
+
+async function requestStateFromAllTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "*://music.youtube.com/*" });
+    LOG(`requesting state from ${tabs.length} YTM tab(s)`);
+    for (const tab of tabs) {
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: "craftify-ytm-get-state" },
+                                      () => void chrome.runtime.lastError);
+      } catch (e) {
+        WARN("state request to tab", tab.id, "failed:", e);
+      }
+    }
+  } catch (e) {
+    WARN("tabs query failed:", e);
   }
 }
 
 async function forwardCommandToYtm(command) {
   const tabs = await chrome.tabs.query({ url: "*://music.youtube.com/*" });
-  if (!tabs.length) return;
+  if (!tabs.length) { WARN("command dropped - no YTM tab open:", command); return; }
+  LOG("forwarding command to YTM tab(s):", command);
   for (const tab of tabs) {
     try {
-      await chrome.tabs.sendMessage(tab.id, {
-        type: "craftify-ytm-command", command: command
-      }, () => void chrome.runtime.lastError);
+      await chrome.tabs.sendMessage(tab.id,
+        { type: "craftify-ytm-command", command }, () => void chrome.runtime.lastError);
     } catch (e) { /* tab may be gone */ }
   }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // State update from the content script -> relay to native host
   if (msg && msg.type === "state") {
+    LOG("content -> native:", msg.state);
     connectNative();
     if (nativePort) {
       nativePort.postMessage(msg);
@@ -52,9 +84,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
-// Keep the SW alive while the port is connected (MV3 SW lifetime workaround)
-if (chrome.runtime.onConnect) {
-  chrome.runtime.onConnect.addListener(() => {});
-}
+// Reconnect when a YTM tab finishes loading / is opened
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (tab && tab.url && tab.url.startsWith("https://music.youtube.com/") &&
+      info.status === "complete") {
+    LOG("YTM tab finished loading:", tabId);
+    connectNative();
+  }
+});
+
+chrome.runtime.onStartup.addListener(() => LOG("extension starting up"));
+chrome.runtime.onInstalled.addListener(() => LOG("extension installed/updated"));
 
 connectNative();
