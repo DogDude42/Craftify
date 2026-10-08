@@ -9,3 +9,7 @@ build/
 *.iws
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+bridge/craftify_ytm_bridge_manifest.json
+bridge/craftify_ytm_bridge.bat
