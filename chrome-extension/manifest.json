@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Craftify Chrome YTM Bridge",
+  "version": "1.0.0",
+  "description": "Native messaging bridge for Craftify (Minecraft Fabric 26.1.2)",
+  "permissions": ["nativeMessaging", "tabs", "activeTab"],
+  "host_permissions": ["http://music.youtube.com/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{"matches": ["*://music.youtube.com/*"], "js": ["content.js"]}],
+  "native_messaging_hosts": [{"name": "craftify_ytm_bridge", "description": "YTM Bridge", "path": "host.exe", "allowed_origins": ["chrome-extension://REPLACE_WITH_ID/"]}]
+}
