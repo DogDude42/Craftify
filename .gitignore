@@ -1,0 +1,11 @@
+.gradle/
+build/
+*.jar
+*.class
+*.log
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db

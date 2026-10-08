@@ -1,5 +1,8 @@
 package net.gravtech
 
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -11,11 +14,13 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 /**
  * YTMWebController - Connects to Chrome/Thorium YouTube Music via WebSocket bridge.
- * Fabric 26.1.2 compatible. Uses OkHttp for WebSocket client.
+ * Fabric 1.21.11 (26.1.2) compatible. Uses OkHttp for WebSocket client.
  */
 class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/youtube-music") {
     private val log = LoggerFactory.getLogger("Craftify/YTMWebController")
@@ -23,11 +28,13 @@ class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/yout
         .pingInterval(10, TimeUnit.SECONDS)
         .build()
     private var webSocket: WebSocket? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val job = Job()
+    private val scope = CoroutineScope(Dispatchers.IO + job)
     private val listeners = mutableListOf<YTMStateListener>()
     private var reconnectAttempts = 0
-    private const val MAX_RECONNECT_ATTEMPTS = 10
-    private const val RECONNECT_DELAY_MS = 5000L
+    private val MAX_RECONNECT_ATTEMPTS = 10
+    private val RECONNECT_DELAY_MS = 5000L
+    private val gson = Gson()
 
     interface YTMStateListener {
         fun onStateChanged(state: YTMState)
@@ -63,7 +70,7 @@ class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/yout
             }
 
             override fun onMessage(@NotNull webSocket: WebSocket, bytes: ByteString) {
-                parseState(bytes.decodeUtf8())
+                parseState(bytes.utf8())
             }
 
             override fun onClosing(@NotNull webSocket: WebSocket, code: Int, @NotNull reason: String) {
@@ -88,10 +95,10 @@ class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/yout
     private fun scheduleReconnect() {
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts++
-            val delay = RECONNECT_DELAY_MS * reconnectAttempts
-            log.info("Reconnecting in ${delay}ms (attempt $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)")
+            val delayMs = RECONNECT_DELAY_MS * reconnectAttempts
+            log.info("Reconnecting in ${delayMs}ms (attempt $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)")
             scope.launch {
-                kotlinx.coroutines.delay(delay)
+                delay(delayMs)
                 connect()
             }
         } else {
@@ -101,23 +108,20 @@ class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/yout
 
     private fun parseState(json: String) {
         try {
-            // Simple JSON parsing - in production use kotlinx.serialization or Gson
+            val jsonObj = JsonParser.parseString(json).asJsonObject
             val state = YTMState(
-                playing = json.contains(""playing":true"),
-                title = extractJson(json, "title"),
-                artist = extractJson(json, "artist"),
-                album = extractJson(json, "album"),
-                videoId = extractJson(json, "videoId")
+                playing = jsonObj.get("playing")?.asBoolean ?: false,
+                title = jsonObj.get("title")?.asString ?: "Unknown",
+                artist = jsonObj.get("artist")?.asString ?: "Unknown",
+                album = jsonObj.get("album")?.asString ?: "Unknown",
+                duration = jsonObj.get("duration")?.asLong ?: 0L,
+                position = jsonObj.get("position")?.asLong ?: 0L,
+                videoId = jsonObj.get("videoId")?.asString ?: ""
             )
             listeners.forEach { it.onStateChanged(state) }
         } catch (e: Exception) {
             log.warn("Failed to parse YTM state: $e")
         }
-    }
-
-    private fun extractJson(json: String, key: String): String {
-        val pattern = ""$key"\s*:\s*"([^"]*)"".toRegex()
-        return pattern.find(json)?.groupValues?.get(1) ?: ""
     }
 
     fun addListener(listener: YTMStateListener) {
@@ -132,18 +136,24 @@ class YTMWebController(private val bridgeUrl: String = "ws://localhost:8765/yout
     fun pause() = sendCommand("pause")
     fun nextTrack() = sendCommand("next")
     fun previousTrack() = sendCommand("prev")
-    fun seek(position: Long) = sendCommand("seek", ""position":$position")
-    fun setVolume(volume: Float) = sendCommand("volume", ""volume":$volume")
+    fun seek(position: Long) = sendCommand("seek", JsonObject().apply { addProperty("position", position) })
+    fun setVolume(volume: Float) = sendCommand("volume", JsonObject().apply { addProperty("volume", volume) })
 
-    private fun sendCommand(action: String, extra: String = "") {
-        val json = "{\"action\":\"$action\"${if (extra.isNotEmpty()) ",$extra" else ""}}"
-        webSocket?.send(json) ?: log.warn("WebSocket not connected, command dropped: $action")
+    private fun sendCommand(action: String, extra: JsonObject? = null) {
+        val json = JsonObject().apply {
+            addProperty("action", action)
+            if (extra != null) {
+                extra.asMap().forEach { (k, v) -> add(k, v) }
+            }
+        }
+        webSocket?.send(gson.toJson(json)) ?: log.warn("WebSocket not connected, command dropped: $action")
     }
 
     fun shutdown() {
         webSocket?.close(1000, "Mod shutting down")
-        client.dispatcher().executorService.shutdown()
-        scope.coroutineContext.cancel()
+        // Use dispatcher property instead of deprecated dispatcher() function
+        client.dispatcher.executorService.shutdown()
+        job.cancel()
     }
 
     companion object {
