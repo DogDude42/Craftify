@@ -12,14 +12,18 @@
   "entrypoints": {
     "main": [
       "net.gravtech.Craftify"
+    ],
+    "client": [
+      "net.gravtech.CraftifyClient"
     ]
   },
   "depends": {
     "fabricloader": ">=0.19.5",
-    "minecraft": "~26.1-"
+    "minecraft": "~26.1-",
+    "fabric-api": ">=0.155.3+26.1.2"
   },
   "icon": "assets/craftify/icon.png",
-  "suggests": {
-    "fabric-api": "*"
-  }
+  "mixins": [
+    "craftify-ytm-web.mixins.json"
+  ]
 }

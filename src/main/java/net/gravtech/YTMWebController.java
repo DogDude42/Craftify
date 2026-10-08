@@ -64,6 +64,7 @@ public final class YTMWebController {
 
     private volatile WebSocket webSocket;
     private int reconnectAttempts = 0;
+    private volatile YTMState lastState;
 
     private YTMWebController(String bridgeUrl) {
         this.bridgeUrl = bridgeUrl;
@@ -150,6 +151,7 @@ public final class YTMWebController {
                     getAsLong(obj, "duration", 0L),
                     getAsLong(obj, "position", 0L),
                     getAsString(obj, "videoId", ""));
+            this.lastState = state;
             List<YTMStateListener> snapshot = snapshotListeners();
             for (YTMStateListener l : snapshot) {
                 try { l.onStateChanged(state); } catch (Exception ignored) {}
@@ -175,6 +177,11 @@ public final class YTMWebController {
         synchronized (listeners) {
             return new ArrayList<>(listeners);
         }
+    }
+
+    /** Most recent state pushed by the extension (null if none yet). */
+    public YTMState lastState() {
+        return lastState;
     }
 
     public void addListener(YTMStateListener listener) {

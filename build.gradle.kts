@@ -15,6 +15,16 @@ dependencies {
     implementation("net.fabricmc.fabric-api:fabric-api:0.155.3+26.1.2")
 }
 
+// No splitEnvironmentSourceSets: this mod is 100% client-only
+// ("environment": "client") so all code lives in the main source set.
+loom {
+    mods {
+        create("craftify-ytm-web") {
+            sourceSet("main")
+        }
+    }
+}
+
 // Substitute ${version} in fabric.mod.json with the project version
 tasks.processResources {
     val version = project.version
