@@ -44,6 +44,22 @@ public class CraftifyClient implements ClientModInitializer {
 
         YtmHud.register();
         Craftify.LOGGER.info("Craftify HUD registered");
+
+        // /craftify opens the config screen (like upstream)
+        net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
+                .EVENT.register((dispatcher, registryAccess) ->
+            dispatcher.register(
+                com.mojang.brigadier.builder.LiteralArgumentBuilder
+                    .<net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource>
+                        literal("craftify")
+                    .executes(ctx -> {
+                        Minecraft.getInstance().execute(() ->
+                                Minecraft.getInstance().setScreen(
+                                        new net.gravtech.ui.ConfigScreen(null)));
+                        return 1;
+                    })
+            )
+        );
     }
 
     /** Called every frame from YtmHud render to poll keybinds. */

@@ -41,9 +41,10 @@ public final class YTMWebController {
         public final long duration;
         public final long position;
         public final String videoId;
+        public final String albumArt;
 
         public YTMState(boolean playing, String title, String artist, String album,
-                         long duration, long position, String videoId) {
+                         long duration, long position, String videoId, String albumArt) {
             this.playing = playing;
             this.title = title;
             this.artist = artist;
@@ -51,6 +52,7 @@ public final class YTMWebController {
             this.duration = duration;
             this.position = position;
             this.videoId = videoId;
+            this.albumArt = albumArt == null ? "" : albumArt;
         }
     }
 
@@ -150,7 +152,8 @@ public final class YTMWebController {
                     getAsString(obj, "album", "Unknown"),
                     getAsLong(obj, "duration", 0L),
                     getAsLong(obj, "position", 0L),
-                    getAsString(obj, "videoId", ""));
+                    getAsString(obj, "videoId", ""),
+                    getAsString(obj, "albumArt", ""));
             this.lastState = state;
             List<YTMStateListener> snapshot = snapshotListeners();
             for (YTMStateListener l : snapshot) {

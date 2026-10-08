@@ -7,12 +7,17 @@ version = "1.0.0+26.1.2"
 
 repositories {
     // Loom adds essential repositories automatically
+    maven("https://maven.terraformersmc.com/releases/")
 }
 
 dependencies {
     minecraft("com.mojang:minecraft:26.1.2")
     implementation("net.fabricmc:fabric-loader:0.19.5")
     implementation("net.fabricmc.fabric-api:fabric-api:0.155.3+26.1.2")
+
+    // ModMenu integration (compileOnly; entrypoint is only invoked when
+    // ModMenu is installed alongside)
+    compileOnly("com.terraformersmc:modmenu:18.0.2")
 }
 
 // No splitEnvironmentSourceSets: this mod is 100% client-only

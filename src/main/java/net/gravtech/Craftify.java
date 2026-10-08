@@ -13,8 +13,9 @@ public class Craftify implements ModInitializer {
     @Override
     public void onInitialize() {
         LOGGER.info("Initializing Craftify Chrome/Thorium YTM (MC 26.1.2)");
-        ytmController = YTMWebController.getInstance("ws://localhost:8765/youtube-music");
-        LOGGER.info("YTMWebController initialized");
+        CraftifyConfig.load();
+        ytmController = YTMWebController.getInstance(CraftifyConfig.get().bridgeUrl);
+        LOGGER.info("YTMWebController initialized (bridge: {})", CraftifyConfig.get().bridgeUrl);
     }
 
     public static YTMWebController getYtmController() {

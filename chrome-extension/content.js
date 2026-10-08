@@ -48,9 +48,29 @@
                 q("ytmusic-player-page")?.getAttribute("video-id") || "";
     }
 
+    // Album art: YTM exposes the player response thumbnails
+    let albumArt = "";
+    try {
+      const playerPage = q("ytmusic-player-page");
+      const pr = playerPage && (playerPage.data || playerPage.__data);
+      const thumbs = pr && pr.playerResponse && pr.playerResponse.videoDetails &&
+                     pr.playerResponse.videoDetails.thumbnail &&
+                     pr.playerResponse.videoDetails.thumbnail.thumbnails;
+      if (thumbs && thumbs.length) {
+        // pick the biggest thumbnail
+        let best = thumbs[0];
+        for (const t of thumbs) if (t.width > best.width) best = t;
+        albumArt = best.url || "";
+      }
+    } catch (e) { /* best-effort */ }
+    // Fallback: standard YT thumbnail by videoId
+    if (!albumArt && videoId) {
+      albumArt = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+    }
+
     return {
       type: "state",
-      state: { playing, title, artist, album, duration, position, videoId }
+      state: { playing, title, artist, album, duration, position, videoId, albumArt }
     };
   }
 
