@@ -27,13 +27,23 @@
     if (albumEl) album = albumEl.textContent.trim();
 
     let duration = 0, position = 0;
-    const timeInfo = q("ytmusic-player-bar .time-info");
-    if (timeInfo) {
-      // Format: "0:42 / 3:51"
-      const m = timeInfo.textContent.match(/(\d+:\d+(?::\d+)?)/g);
-      if (m) {
-        position = parseTime(m[0]);
-        if (m[1]) duration = parseTime(m[1]);
+    // The HTML5 <video> element gives TRUE sub-second currentTime/duration -
+    // the .time-info text only has seconds, which made the HUD clock skip.
+    const video = q("video");
+    if (video) {
+      const cur = parseFloat(video.currentTime);
+      const dur = parseFloat(video.duration);
+      if (!isNaN(cur) && cur > 0) position = cur;
+      if (!isNaN(dur) && dur > 0 && isFinite(dur)) duration = dur;
+    }
+    if (!duration || !position) {
+      const timeInfo = q("ytmusic-player-bar .time-info");
+      if (timeInfo) {
+        const m = timeInfo.textContent.match(/(\d+:\d+(?::\d+)?)/g);
+        if (m) {
+          position = parseTime(m[0]);
+          if (m[1]) duration = parseTime(m[1]);
+        }
       }
     }
     let videoId = "";
@@ -65,7 +75,13 @@
 
     return {
       type: "state",
-      state: { playing, title, artist, album, duration, position, videoId, albumArt }
+      state: {
+        playing, title, artist, album,
+        duration, position,               // seconds (legacy)
+        positionMs: Math.round(position * 1000),
+        durationMs: Math.round(duration * 1000),
+        videoId, albumArt
+      }
     };
   }
 

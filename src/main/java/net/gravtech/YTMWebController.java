@@ -38,19 +38,21 @@ public final class YTMWebController {
         public final String title;
         public final String artist;
         public final String album;
-        public final long duration;
-        public final long position;
+        /** Track length in MILLISECONDS (sub-second smooth clock). */
+        public final long durationMs;
+        /** Playhead in MILLISECONDS. */
+        public final long positionMs;
         public final String videoId;
         public final String albumArt;
 
         public YTMState(boolean playing, String title, String artist, String album,
-                         long duration, long position, String videoId, String albumArt) {
+                         long durationMs, long positionMs, String videoId, String albumArt) {
             this.playing = playing;
             this.title = title;
             this.artist = artist;
             this.album = album;
-            this.duration = duration;
-            this.position = position;
+            this.durationMs = durationMs;
+            this.positionMs = positionMs;
             this.videoId = videoId;
             this.albumArt = albumArt == null ? "" : albumArt;
         }
@@ -147,13 +149,17 @@ public final class YTMWebController {
     private void parseState(String json) {
         try {
             JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+            long durationMs = getAsLong(obj, "durationMs", 0L);
+            long positionMs = getAsLong(obj, "positionMs", 0L);
+            if (durationMs <= 0) durationMs = getAsLong(obj, "duration", 0L) * 1000L;
+            if (positionMs <= 0) positionMs = getAsLong(obj, "position", 0L) * 1000L;
             YTMState state = new YTMState(
                     getAsBool(obj, "playing", false),
                     getAsString(obj, "title", "Unknown"),
                     getAsString(obj, "artist", "Unknown"),
                     getAsString(obj, "album", "Unknown"),
-                    getAsLong(obj, "duration", 0L),
-                    getAsLong(obj, "position", 0L),
+                    durationMs,
+                    positionMs,
                     getAsString(obj, "videoId", ""),
                     getAsString(obj, "albumArt", ""));
             this.lastState = state;

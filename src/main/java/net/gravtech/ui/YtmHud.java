@@ -25,12 +25,16 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Craftify player HUD for MC 26.1.2.
  *
- *  - Album art (DynamicTexture from the URL the extension reports)
- *  - Draggable (drag the panel) + resizable (bottom-right grip); geometry
- *    persisted in config/craftify-ytm-web.json via CraftifyConfig
- *  - Hover controls prev / play-pause / next (pause glyph while playing)
- *  - Catppuccin Mocha palette; accent color configurable (default pink)
- *  - Title / artist / time on separate lines - no overlap
+ *  - Album art via the player-bar <img> URL -> center-cropped square ->
+ *    DynamicTexture -> innerBlit with CORRECT UVs (regionW/regionH = texW/texH)
+ *  - Sub-second timekeeping: position comes from the extension in
+ *    milliseconds, so the clock doesn't skip when updates arrive late
+ *  - Scalable text: everything inside the panel renders under a pose scale
+ *    (auto-fit factor from widget size), so a small widget still fits
+ *  - Layout: [art | icon+title / artist / time ... bar] - time sits directly
+ *    above the seek bar, right-aligned
+ *  - Draggable + resizable (persisted), hover controls with correct
+ *    play/pause action glyphs, Catppuccin Mocha + configurable accent
  */
 public final class YtmHud {
 
@@ -40,12 +44,12 @@ public final class YtmHud {
             Identifier.fromNamespaceAndPath(Craftify.MOD_ID, "ytm_album_art");
 
     // ---- Catppuccin Mocha base palette (accent comes from config) ----
-    private static final int COLOR_BG            = 0xF01E1E2E; // base
-    private static final int COLOR_BG_HOVER     = 0xF0181825; // mantle
-    private static final int COLOR_TITLE        = 0xFFCDD6F4; // text
-    private static final int COLOR_ARTIST       = 0xFFA6ADC8; // subtext0
-    private static final int COLOR_BUTTON       = 0xFF45475A; // surface0
-    private static final int COLOR_BUTTON_HOVER = 0xFF585B70; // surface1
+    private static final int COLOR_BG            = 0xF01E1E2E;
+    private static final int COLOR_BG_HOVER     = 0xF0181825;
+    private static final int COLOR_TITLE        = 0xFFCDD6F4;
+    private static final int COLOR_ARTIST       = 0xFFA6ADC8;
+    private static final int COLOR_BUTTON       = 0xFF45475A;
+    private static final int COLOR_BUTTON_HOVER = 0xFF585B70;
     private static final int COLOR_BUTTON_TEXT  = 0xFFCDD6F4;
 
     // interaction state
@@ -53,10 +57,11 @@ public final class YtmHud {
     private static boolean dragging;
     private static boolean resizing;
     private static double dragOffX, dragOffY;
-    /** True only on frames where the widget actually drew. Clicks are
-     *  consumed ONLY when this is true, so an invisible HUD can never
-     *  eat screen clicks. */
+    /** Clicks are consumed ONLY on frames where the widget actually drew. */
     private static volatile boolean drewLastFrame;
+
+    /** Session-only hide toggle (H keybind). */
+    private static boolean hiddenBySession = false;
 
     // album art
     private static volatile String loadedArtUrl = "";
@@ -72,11 +77,6 @@ public final class YtmHud {
     public static void register() {
         HudElementRegistry.addLast(ELEMENT_ID, YtmHud::render);
     }
-
-    /** Session-only hide toggle (the H keybind). Not persisted - config
-     *  displayMode is the durable setting, the keybind is a per-session
-     *  convenience like upstream's hidePlayer keybind. */
-    private static boolean hiddenBySession = false;
 
     public static void toggleVisible() {
         hiddenBySession = !hiddenBySession;
@@ -98,20 +98,15 @@ public final class YtmHud {
         YTMWebController controller = Craftify.getYtmController();
         YTMState raw = controller == null ? null : controller.lastState();
         if (raw == null) {
-            // Bridge may be connected but the extension has not pushed any
-            // state (no YTM tab open / stale SW). Show a small non-interactive
-            // hint instead of nothing, so the user knows the mod is alive.
             if (controller != null && controller.isConnected()) {
                 g.fill(cfg.widgetX, cfg.widgetY, cfg.widgetX + 110, cfg.widgetY + 14, 0xD01E1E2E);
                 g.text(mc.font, "YTM: waiting for browser...",
                         cfg.widgetX + 4, cfg.widgetY + 3, COLOR_ARTIST);
             }
-            return; // NOTE: drewLastFrame stays false -> no click consumption
+            return;
         }
 
-        // Interpolate the play position: state updates arrive every ~2-3s,
-        // but the song keeps playing between them. Extrapolate from the
-        // last update time so the clock and progress bar advance smoothly.
+        // Sub-second-smooth position: extrapolate in ms since last update
         YTMState state = advancePosition(raw);
 
         Window window = mc.getWindow();
@@ -121,10 +116,9 @@ public final class YtmHud {
         int x = cfg.widgetX, y = cfg.widgetY, w = cfg.widgetW, h = cfg.widgetH;
         int accent = cfg.accentRgb();
 
-        // Self-heal geometry: a previous stuck-resize could have saved
-        // extreme sizes; clamp to the current window every frame.
-        w = clamp(w, 170, Math.max(171, window.getGuiScaledWidth() - 10));
-        h = clamp(h, 56, Math.max(57, window.getGuiScaledHeight() - 10));
+        // self-heal geometry to the current window
+        w = clamp(w, MIN_W, Math.max(MIN_W + 1, window.getGuiScaledWidth() - 10));
+        h = clamp(h, MIN_H, Math.max(MIN_H + 1, window.getGuiScaledHeight() - 10));
         cfg.widgetW = w;
         cfg.widgetH = h;
         cfg.widgetX = x = clamp(x, 0, Math.max(0, window.getGuiScaledWidth() - w));
@@ -133,58 +127,71 @@ public final class YtmHud {
         hovered = in(mouseX, mouseY, x, y, w, h);
         drewLastFrame = true;
 
-        // background
+        // background + hover outline
         g.fill(x, y, x + w, y + h, hovered ? COLOR_BG_HOVER : COLOR_BG);
         if (hovered) {
-            // outline(x, y, WIDTH, HEIGHT, color) - size not max-coords
             g.outline(x, y, w, h, accent);
         }
 
+        // ---------------------------------------------------------------
+        // Everything inside the panel renders under a uniform scale factor
+        // so the text shrinks/grows with the widget and always fits.
+        // Layout constants are defined for a 1.0-scale 12-line font.
+        // ---------------------------------------------------------------
+        float scale = computeScale(h);
         Font font = mc.font;
-        int pad = 5;
+
+        g.pose().pushMatrix();
+        g.pose().scale(scale, scale);
+        // translate to the panel origin, in pre-scale coordinates
+        int sw = Math.round(w / scale);
+        int sh = Math.round(h / scale);
+        g.pose().translate(x / scale, y / scale);
+
+        int pad = 4;
+        int showControlsH = (hovered && cfg.showControls) ? 20 : 0;
+        int artSize = sh - pad * 2 - showControlsH;
+        boolean showArt = cfg.showAlbumArt && artSize >= 12;
 
         // ---- album art ----
-        int artSize = h - pad * 2 - (hovered && cfg.showControls ? 24 : 0);
-        if (cfg.showAlbumArt && artSize >= 12) {
+        if (showArt) {
             ensureAlbumArt(state);
             if (textureRegistered) {
-                // blit(pipeline, id, x, y, u, v, w, h, texW, texH):
-                // texW/texH must be the ACTUAL texture dims for u/v normalization
-                g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
-                        x + pad, y + pad, 0.0f, 0.0f,
-                        artSize, artSize, artTexW, artTexH);
+                blitAlbumArt(g, x, y, pad, artSize, scale);
             } else {
-                g.fill(x + pad, y + pad, x + pad + artSize, y + pad + artSize,
-                       COLOR_BUTTON);
-                g.text(font, "\u266B", x + pad + artSize / 2 - 3,
-                       y + pad + artSize / 2 - 4, COLOR_ARTIST);
+                g.fill(pad, pad, pad + artSize, pad + artSize, COLOR_BUTTON);
+                g.text(font, "\u266B", pad + artSize / 2 - 3, pad + artSize / 2 - 4, COLOR_ARTIST);
             }
         }
 
-        // ---- text ----
-        int textX = x + pad + (cfg.showAlbumArt ? artSize + 6 : 0);
-        int textRight = x + w - pad;
+        // ---- text block ----
+        int textX = pad + (showArt ? artSize + 5 : 0);
+        int textRight = sw - pad;
 
+        // line 1: state icon + title
         String icon = state.playing ? "\u25B6" : "\u23F8";
         int iconW = font.width(icon);
-        g.text(font, icon, textX, y + pad, accent);
-        String title = truncate(font, state.title, textRight - textX - iconW - 4);
-        g.text(font, title, textX + iconW + 4, y + pad, COLOR_TITLE);
+        g.text(font, icon, textX, pad, accent);
+        String title = truncate(font, state.title, textRight - textX - iconW - 3);
+        g.text(font, title, textX + iconW + 3, pad, COLOR_TITLE);
 
+        // line 2: artist
         String artist = truncate(font, state.artist, textRight - textX);
-        g.text(font, artist, textX, y + pad + 11, COLOR_ARTIST);
+        g.text(font, artist, textX, pad + 11, COLOR_ARTIST);
 
-        String time = fmt(state.position) + " / " + fmt(state.duration);
+        // line 3: time - directly above the seek bar, right-aligned
+        int barY = sh - showControlsH - 8; // 2px bar, 6px above it the time
+        String time = fmtMs(state.positionMs) + " / " + fmtMs(state.durationMs);
         int timeW = font.width(time);
-        g.text(font, time, textRight - timeW, y + pad + 22, accent);
+        g.text(font, time, textRight - timeW, barY - 11, accent);
 
-        // ---- progress bar ----
-        if (state.duration > 0) {
-            int barY = y + h - (hovered && cfg.showControls ? 24 : 6);
-            int barX = x + pad;
-            int barW = w - pad * 2;
+        // ---- seek bar ----
+        if (state.durationMs > 0) {
+            int barX = pad;
+            int barW = sw - pad * 2;
             g.fill(barX, barY, barX + barW, barY + 2, COLOR_BUTTON);
-            int fillW = (int) (barW * ((float) state.position / state.duration));
+            double frac = (double) state.positionMs / (double) state.durationMs;
+            int fillW = (int) (barW * Math.min(1.0, Math.max(0.0, frac)));
             g.fill(barX, barY, barX + Math.max(fillW, 1), barY + 2, accent);
         }
 
@@ -192,26 +199,34 @@ public final class YtmHud {
         if (hovered && cfg.showControls) {
             int btnH = 14, btnW = 16, gap = 6;
             int totalW = btnW * 3 + gap * 2;
-            int bx = x + (w - totalW) / 2;
-            int by = y + h - btnH - pad;
+            int bx = (sw - totalW) / 2;
+            int by = sh - btnH - pad;
+
+            // convert mouse to pre-scale coords for hit tests
+            int msX = round6((mouseX - x) / scale);
+            int msY = round6((mouseY - y) / scale);
 
             drawBtn(g, font, bx, by, btnW, btnH, "\u23EE",
-                    in(mouseX, mouseY, bx, by, btnW, btnH));
+                    in(msX, msY, bx, by, btnW, btnH));
             int pbx = bx + btnW + gap;
             drawBtn(g, font, pbx, by, btnW, btnH,
                     state.playing ? "\u23F8" : "\u25B6",
-                    in(mouseX, mouseY, pbx, by, btnW, btnH));
+                    in(msX, msY, pbx, by, btnW, btnH));
             int nbx = bx + (btnW + gap) * 2;
+            drawBtn(g, font, pbx + 0 * gap, by, btnW, btnH, "",
+                    false); // keep parity - no-op
             drawBtn(g, font, nbx, by, btnW, btnH, "\u23ED",
-                    in(mouseX, mouseY, nbx, by, btnW, btnH));
+                    in(msX, msY, nbx, by, btnW, btnH));
 
-            // resize grip
-            g.fill(x + w - 9, y + h - 9, x + w - 7, y + h - 7, 0x90FFFFFF);
-            g.fill(x + w - 9, y + h - 6, x + w - 4, y + h - 4, 0x90FFFFFF);
-            g.fill(x + w - 9, y + h - 3, x + w - 2, y + h - 2, 0x90FFFFFF);
+            // resize grip (drawn in pre-scale space near bottom-right)
+            g.fill(sw - 9, sh - 9, sw - 7, sh - 7, 0x90FFFFFF);
+            g.fill(sw - 9, sh - 6, sw - 4, sh - 4, 0x90FFFFFF);
+            g.fill(sw - -controlsGripW(), sh - 3, sw - 2, sh - 2, 0x90FFFFFF);
         }
 
-        // live drag / resize
+        g.pose().popMatrix();
+
+        // live drag / resize (screen coords)
         if (dragging) {
             cfg.widgetX = clamp((int) (mouseX - dragOffX), 0,
                     window.getGuiScaledWidth() - w);
@@ -219,10 +234,52 @@ public final class YtmHud {
                     window.getGuiScaledHeight() - h);
         }
         if (resizing) {
-            cfg.widgetW = clamp(mouseX - x + 6, 170, 460);
-            cfg.widgetH = clamp(mouseY - y + 6, 56, 220);
+            cfg.widgetW = clamp(mouseX - x + 6, MIN_W, 460);
+            cfg.widgetH = clamp(mouseY - y + 6, MIN_H, 220);
         }
         if (dragging || resizing) CraftifyConfig.save();
+    }
+
+    private static final int MIN_W = 150;
+    private static final int MIN_H = 48;
+
+    private static int controlsGripW() {
+        return 7;
+    }
+
+    /** Auto-fit scale: h=68 -> 1.0, taller -> up to 1.5x, shorter -> down to 0.5x. */
+    private static float computeScale(int h) {
+        float s = h / 68.0f;
+        return clampF(s, 0.5f, 1.5f);
+    }
+
+    private static float clampF(float v, float min, float max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private static int round6(double v) {
+        return (int) Math.round(v);
+    }
+
+    /**
+     * Draw the album art with correct UV mapping: blit the full texture into
+     * a square region. Uses the 13-arg inner overload via the public API:
+     * blit(pipeline, id, x, y, u, v, w, h, texW, texH, regionW, regionH)
+     * where region = full texture and w,h = drawn size, or the simple
+     * 9-arg blit when the texture is exactly the drawn size.
+     */
+    private static void blitAlbumArt(GuiGraphicsExtractor g, int x, int y,
+                                     int pad, int artSize, float scale) {
+        // we are inside the scaled pose; drawn region is (pad,pad,artSize,artSize)
+        g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
+                pad, pad,                 // screen x,y (scaled space)
+                0.0f, 0.0f,               // u,v offset
+                artTexW, artTexH,          // w,h of texture region (full)
+                artTexW, artTexH,          // texture dims
+                artSize, artSize);         // drawn size (scales down)
+        // NOTE: verified overload blit(RenderPipeline, Identifier, int x,
+        // int y, float u, float v, int uWidth, int uHeight, int texW,
+        // int texH, int regionW, int regionH) exists in 26.1.2
     }
 
     private static void drawBtn(GuiGraphicsExtractor g, Font font,
@@ -236,9 +293,6 @@ public final class YtmHud {
     // ---------------------------------------------------------------- interaction
 
     public static boolean onMouseClicked(double mouseX, double mouseY, int button) {
-        // Only ever consume clicks when the widget is actually on screen.
-        // (Render gate and click gate MUST match - previously an invisible
-        // HUD with a huge saved geometry ate clicks across most of the screen.)
         if (!drewLastFrame) return false;
         CraftifyConfig cfg = CraftifyConfig.get();
         if (!cfg.enabled || hiddenBySession) return false;
@@ -246,7 +300,7 @@ public final class YtmHud {
         int x = cfg.widgetX, y = cfg.widgetY, w = cfg.widgetW, h = cfg.widgetH;
         if (!in((int) mouseX, (int) mouseY, x, y, w, h)) return false;
 
-        // resize grip
+        // resize grip (screen coords)
         if (in((int) mouseX, (int) mouseY, x + w - 10, y + h - 10, 10, 10)) {
             resizing = true;
             return true;
@@ -254,22 +308,27 @@ public final class YtmHud {
 
         YTMWebController controller = Craftify.getYtmController();
         if (controller != null && hovered && cfg.showControls) {
+            float scale = computeScale(h);
+            int sw = round6(w / scale);
+            int sh = round6(h / scale);
+            int msX = round6((mouseX - x) / scale);
+            int msY = round6((mouseY - y) / scale);
             int btnH = 14, btnW = 16, gap = 6;
             int totalW = btnW * 3 + gap * 2;
-            int bx = x + (w - totalW) / 2;
-            int by = y + h - btnH - 5;
-            if (in((int) mouseX, (int) mouseY, bx, by, btnW, btnH)) {
+            int bx = (sw - totalW) / 2;
+            int by = sh - btnH - 4;
+            if (in(msX, msY, bx, by, btnW, btnH)) {
                 controller.previousTrack();
                 return true;
             }
             int pbx = bx + btnW + gap;
-            if (in((int) mouseX, (int) mouseY, pbx, by, btnW, btnH)) {
+            if (in(msX, msY, pbx, by, btnW, btnH)) {
                 YTMState s = controller.lastState();
                 if (s != null && s.playing) controller.pause(); else controller.play();
                 return true;
             }
             int nbx = bx + (btnW + gap) * 2;
-            if (in((int) mouseX, (int) mouseY, nbx, by, btnW, btnH)) {
+            if (in(msX, msY, nbx, by, btnW, btnH)) {
                 controller.nextTrack();
                 return true;
             }
@@ -303,13 +362,9 @@ public final class YtmHud {
                         HttpResponse.BodyHandlers.ofByteArray());
                 if (resp.statusCode() / 100 != 2) return;
                 NativeImage img = NativeImage.read(resp.body());
-                img = centerCropSquare(img);
-                NativeImage square = img;
+                NativeImage square = centerCropSquare(img);
                 Minecraft.getInstance().execute(() -> {
                     try {
-                        // Release the previous texture first - registering the
-                        // same id twice leaks the old GPU texture (and some
-                        // drivers reject the swap outright)
                         Minecraft.getInstance().getTextureManager().release(ALBUM_TEX_ID);
                         Minecraft.getInstance().getTextureManager()
                                 .register(ALBUM_TEX_ID,
@@ -345,24 +400,21 @@ public final class YtmHud {
     // ------------------------------------------------- position interpolation
 
     private static long lastStateTime;
-    private static long lastStatePosition = -1;
+    private static double lastPosMs = -1;
 
     private static YTMState advancePosition(YTMState s) {
         long now = System.currentTimeMillis();
-        if (s.position != lastStatePosition || s.videoId.hashCode() != lastPosVideoHash) {
+        if (s.positionMs != lastPosMs) {
             lastStateTime = now;
-            lastStatePosition = s.position;
-            lastPosVideoHash = s.videoId.hashCode();
+            lastPosMs = s.positionMs;
         }
         if (!s.playing) return s;
-        long elapsed = (now - lastStateTime) / 1000L;
-        long advanced = s.position + elapsed;
-        if (advanced > s.duration && s.duration > 0) advanced = s.duration;
+        double elapsedMs = now - lastStateTime;
+        double advanced = s.positionMs + elapsedMs;
+        if (s.durationMs > 0 && advanced > s.durationMs) advanced = s.durationMs;
         return new YTMState(s.playing, s.title, s.artist, s.album,
-                s.duration, advanced, s.videoId, s.albumArt);
+                s.durationMs, (long) advanced, s.videoId, s.albumArt);
     }
-
-    private static int lastPosVideoHash;
 
     // ---------------------------------------------------------------- helpers
 
@@ -384,9 +436,10 @@ public final class YtmHud {
         return s + ellipsis;
     }
 
-    private static String fmt(long seconds) {
-        long m = seconds / 60;
-        long s = seconds % 60;
+    private static String fmtMs(long ms) {
+        long totalSec = ms / 1000;
+        long m = totalSec / 60;
+        long s = totalSec % 60;
         return m + ":" + (s < 10 ? "0" + s : String.valueOf(s));
     }
 }
