@@ -122,10 +122,17 @@ public class ConfigScreen extends Screen {
     }
 
     @Override
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
+        // vanilla menu background (blur + dirt gradient), drawn UNDER widgets
+        // (the render pipeline: nextStratum -> extractBackground -> nextStratum
+        //  -> extractRenderState(widgets))
+        super.extractBackground(g, mouseX, mouseY, partial);
+        extractMenuBackground(g);
+    }
+
+    @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partial) {
         super.extractRenderState(g, mouseX, mouseY, partial);
-        // background dim
-        g.fillGradient(0, 0, this.width, this.height, 0xC0101010, 0xC0101010);
         g.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFFFF);
     }
 

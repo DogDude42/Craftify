@@ -2,8 +2,6 @@ package net.gravtech;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import net.minecraft.client.Minecraft;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -49,6 +47,9 @@ public final class CraftifyConfig {
     /** NEW: accent color preset. */
     public String accentColor = "pink";  // pink | blue | green | mauve | red | yellow
 
+    /** Bump when config semantics change (migration trigger). */
+    public int configVersion = 2;
+
     // ---- internals ----
     private static final Object IO_LOCK = new Object();
 
@@ -60,7 +61,9 @@ public final class CraftifyConfig {
     }
 
     public static Path path() {
-        return Minecraft.getInstance().gameDirectory.toPath()
+        // FabricLoader is available at any entrypoint phase, unlike
+        // Minecraft.getInstance() during early init
+        return net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir()
                 .resolve("config").resolve("craftify-ytm-web.json");
     }
 
@@ -77,6 +80,17 @@ public final class CraftifyConfig {
                 Craftify.LOGGER.warn("config load failed: {}", String.valueOf(e));
             }
             if (instance == null) instance = new CraftifyConfig();
+
+            // Migration from configVersion 1: the first build's H keybind
+            // persisted displayMode=NEVER on a single key press, hiding the
+            // HUD permanently. Reset anyone stuck on that to SONG.
+            if (instance.configVersion < 2) {
+                Craftify.LOGGER.info("migrating craftify config v1 -> v2 " +
+                        "(resetting displayMode; the old H keybind persisted NEVER)");
+                instance.displayMode = "SONG";
+                instance.configVersion = 2;
+                save();
+            }
         }
     }
 

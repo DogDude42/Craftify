@@ -67,13 +67,14 @@ public final class YtmHud {
         HudElementRegistry.addLast(ELEMENT_ID, YtmHud::render);
     }
 
-    public static void toggleVisible() {
-        CraftifyConfig.update(g -> g.displayMode =
-                g.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER ? "SONG" : "NEVER");
-    }
+    /** Session-only hide toggle (the H keybind). Not persisted - config
+     *  displayMode is the durable setting, the keybind is a per-session
+     *  convenience like upstream's hidePlayer keybind. */
+    private static boolean hiddenBySession = false;
 
-    /** Called by ConfigScreen when display mode was turned back on. */
-    public static void resetHiddenByConfig() {}
+    public static void toggleVisible() {
+        hiddenBySession = !hiddenBySession;
+    }
 
     // ---------------------------------------------------------------- render
 
@@ -84,20 +85,14 @@ public final class YtmHud {
         CraftifyClient.handleKeybinds();
 
         CraftifyConfig cfg = CraftifyConfig.get();
-        if (!cfg.enabled) return;
-
-        switch (cfg.displayModeEnum()) {
-            case NEVER -> { return; }
-            case ALWAYS -> { /* show even without a song */ }
-            case SONG -> {
-                YTMWebController controller = Craftify.getYtmController();
-                YTMState state = controller == null ? null : controller.lastState();
-                if (state == null) return;
-            }
-        }
+        if (!cfg.enabled || hiddenBySession) return;
+        if (cfg.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER) return;
 
         YTMWebController controller = Craftify.getYtmController();
         YTMState state = controller == null ? null : controller.lastState();
+        // ALWAYS still needs *something* to show; without a state we have
+        // nothing to render, so return. (Without a bridge there's no art,
+        // title or bar - an empty box would be worse than nothing.)
         if (state == null) return;
 
         Window window = mc.getWindow();
@@ -211,7 +206,8 @@ public final class YtmHud {
 
     public static boolean onMouseClicked(double mouseX, double mouseY, int button) {
         CraftifyConfig cfg = CraftifyConfig.get();
-        if (!cfg.enabled) return false;
+        if (!cfg.enabled || hiddenBySession) return false;
+        if (cfg.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER) return false;
         int x = cfg.widgetX, y = cfg.widgetY, w = cfg.widgetW, h = cfg.widgetH;
         if (!in((int) mouseX, (int) mouseY, x, y, w, h)) return false;
 
