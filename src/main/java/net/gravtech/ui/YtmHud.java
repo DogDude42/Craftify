@@ -195,12 +195,9 @@ public final class YtmHud {
         int timeW = font.width(time);
         g.text(font, time, textRight - timeW, barY - 11, accent);
 
-        // ---- line 1: state icon + scrolling title ----
-        String icon = state.playing ? "\u25B6" : "\u23F8";
-        int iconW = font.width(icon);
-        g.text(font, icon, textLeft, pad, accent);
+        // ---- line 1: title (marquee-scrolls when too long) ----
         drawScrollingText(g, font, state.title,
-                textLeft + iconW + 3, pad, textRight - textLeft - iconW - 3, COLOR_TITLE);
+                textLeft, pad, textW, COLOR_TITLE);
 
         // ---- info lines: artist / album / extra parts, wrapping down ----
         List<String> infoLines = splitInfoLines(state.artist, state.album);

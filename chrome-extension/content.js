@@ -6,32 +6,56 @@
   let lastArtConverted = "";
   let lastArtPng = "";
 
-  async function convertArtToPng(url) {
+  const ART_CAP = 640; // plenty for HUD sizes; keeps the data URL compact
+
+  async function artFromUrl(url) {
+    const resp = await fetch(url, { mode: "cors" });
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
     try {
-      const resp = await fetch(url, { mode: "cors" });
-      if (!resp.ok) return null;
-      const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
-      // center-crop to square here so the mod gets square pixels directly
-      const side = Math.min(bmp.width, bmp.height);
-      const canvas = document.createElement("canvas");
-      canvas.width = side; canvas.height = side;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(bmp,
-          (bmp.width - side) / 2, (bmp.height - side) / 2, side, side,
-          0, 0, side, side);
-      return await new Promise((resolve) => {
-        canvas.toBlob((b) => {
-          if (!b) return resolve(null);
-          const fr = new FileReader();
-          fr.onload = () => resolve(fr.result);
-          fr.onerror = () => resolve(null);
-          fr.readAsDataURL(b);
-        }, "image/png");
-      });
+      return await createImageBitmap(blob);
     } catch (e) {
-      return null;
+      return null; // e.g. webp decode issue, 404 html, etc.
     }
+  }
+
+  async function convertArtToPng(videoId, barUrl) {
+    // Full-res candidates first (maxres sometimes 404s on older uploads)
+    const candidates = [];
+    if (videoId) {
+      candidates.push("https://i.ytimg.com/vi/" + videoId + "/maxresdefault.jpg");
+      candidates.push("https://i.ytimg.com/vi/" + videoId + "/sddefault.jpg");
+      candidates.push("https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg");
+    }
+    if (barUrl) candidates.push(barUrl);
+    let bmp = null;
+    for (const c of candidates) {
+      bmp = await artFromUrl(c);
+      if (bmp) break;
+    }
+    if (!bmp) return null;
+    // center-crop to square, capped at ART_CAP so the PNG data URL stays
+    // well under the websocket message limit
+    const side = Math.min(bmp.width, bmp.height, ART_CAP);
+    const canvas = document.createElement("canvas");
+    canvas.width = side; canvas.height = side;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp,
+        (bmp.width - Math.min(bmp.width, bmp.height)) / 2,
+        (bmp.height - Math.min(bmp.width, bmp.height)) / 2,
+        Math.min(bmp.width, bmp.height), Math.min(bmp.width, bmp.height),
+        0, 0, side, side);
+    return await new Promise((resolve) => {
+      canvas.toBlob((b) => {
+        if (!b) return resolve(null);
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => resolve(null);
+        fr.readAsDataURL(b);
+      }, "image/png");
+    });
   }
 
   function q(sel) { return document.querySelector(sel); }
@@ -102,18 +126,21 @@
                 q("ytmusic-player-page")?.getAttribute("video-id") || "";
     }
 
-    // Album art URL (for the mod's direct fetch fallback).
+    // Album art URL. NOTE: the player-bar <img> is a tiny ~60px thumbnail -
+    // using it made the HUD art blurry. The videoId-based ytimg thumbs are
+    // full-res (maxresdefault = 1280px); the bar img is only a last resort
+    // when there is no videoId.
     let albumArt = "";
-    try {
-      const barArt = q("ytmusic-player-bar img#img") ||
-                     q("ytmusic-player-bar .yt-img-shadow") ||
-                     q("ytmusic-player-bar image[src]") ||
-                     q("ytmusic-player-bar img");
-      const src = barArt && (barArt.getAttribute("src") || barArt.getAttribute("href"));
-      if (src && src.startsWith("http")) albumArt = src;
-    } catch (e) { /* best-effort */ }
-    if (!albumArt && videoId) {
+    if (videoId) {
       albumArt = "https://i.ytimg.com/vi/" + videoId + "/maxresdefault.jpg";
+    } else {
+      try {
+        const barArt = q("ytmusic-player-bar img#img") ||
+                       q("ytmusic-player-bar .yt-img-shadow") ||
+                       q("ytmusic-player-bar img");
+        const src = barArt && (barArt.getAttribute("src") || barArt.getAttribute("href"));
+        if (src && src.startsWith("http")) albumArt = src;
+      } catch (e) { /* best-effort */ }
     }
 
     // Convert art to a PNG data URL in-page: ytimg serves Chrome webp,
@@ -122,9 +149,10 @@
     // Async - the albumArtData arrives with the NEXT state push (~1-3s).
     if (albumArt && albumArt !== lastArtConverted) {
       lastArtConverted = albumArt;
-      convertArtToPng(albumArt).then(dataUrl => {
-        if (dataUrl) lastArtPng = dataUrl;
-      }).catch(() => {});
+      convertArtToPng(videoId, albumArt.startsWith("https://i.ytimg.com/") ? null : albumArt)
+        .then(dataUrl => {
+          if (dataUrl) lastArtPng = dataUrl;
+        }).catch(() => {});
     }
 
     return {
