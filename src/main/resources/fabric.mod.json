@@ -17,5 +17,9 @@
   "depends": {
     "fabricloader": ">=0.19.5",
     "minecraft": "~26.1-"
+  },
+  "icon": "assets/craftify/gear.png",
+  "suggests": {
+    "fabric-api": "*"
   }
 }
