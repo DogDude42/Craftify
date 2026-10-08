@@ -30,7 +30,13 @@ public abstract class MouseHandlerMixin {
     @Inject(method = "onButton", at = @At("HEAD"), cancellable = true)
     private void craftify$onButton(long window, MouseButtonInfo info, int action,
                                    CallbackInfo ci) {
-        if (action != 1) return; // only press events
+        // action: 0 = release, 1 = press (GLFW)
+        if (action == 0) {
+            // ALWAYS notify on release so drag/resize can never get stuck
+            YtmHud.onMouseReleased();
+            return;
+        }
+        if (action != 1) return;
 
         MouseHandler self = (MouseHandler) (Object) this;
         Minecraft mc = Minecraft.getInstance();

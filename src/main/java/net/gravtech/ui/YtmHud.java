@@ -57,6 +57,8 @@ public final class YtmHud {
     // album art
     private static volatile String loadedArtUrl = "";
     private static volatile boolean textureRegistered;
+    private static volatile int artTexW = 1;
+    private static volatile int artTexH = 1;
     private static final HttpClient ART_HTTP = HttpClient.newHttpClient();
 
     private YtmHud() {}
@@ -89,11 +91,16 @@ public final class YtmHud {
         if (cfg.displayModeEnum() == CraftifyConfig.DisplayMode.NEVER) return;
 
         YTMWebController controller = Craftify.getYtmController();
-        YTMState state = controller == null ? null : controller.lastState();
+        YTMState raw = controller == null ? null : controller.lastState();
         // ALWAYS still needs *something* to show; without a state we have
         // nothing to render, so return. (Without a bridge there's no art,
         // title or bar - an empty box would be worse than nothing.)
-        if (state == null) return;
+        if (raw == null) return;
+
+        // Interpolate the play position: state updates arrive every ~2-3s,
+        // but the song keeps playing between them. Extrapolate from the
+        // last update time so the clock and progress bar advance smoothly.
+        YTMState state = advancePosition(raw);
 
         Window window = mc.getWindow();
         int mouseX = (int) mc.mouseHandler.getScaledXPos(window);
@@ -119,9 +126,11 @@ public final class YtmHud {
         if (cfg.showAlbumArt && artSize >= 12) {
             ensureAlbumArt(state);
             if (textureRegistered) {
+                // blit(pipeline, id, x, y, u, v, w, h, texW, texH):
+                // texW/texH must be the ACTUAL texture dims for u/v normalization
                 g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
                         x + pad, y + pad, 0.0f, 0.0f,
-                        artSize, artSize, artSize, artSize);
+                        artSize, artSize, artTexW, artTexH);
             } else {
                 g.fill(x + pad, y + pad, x + pad + artSize, y + pad + artSize,
                        COLOR_BUTTON);
@@ -268,11 +277,19 @@ public final class YtmHud {
                         HttpResponse.BodyHandlers.ofByteArray());
                 if (resp.statusCode() / 100 != 2) return;
                 NativeImage img = NativeImage.read(resp.body());
+                img = centerCropSquare(img);
+                NativeImage square = img;
                 Minecraft.getInstance().execute(() -> {
                     try {
+                        // Release the previous texture first - registering the
+                        // same id twice leaks the old GPU texture (and some
+                        // drivers reject the swap outright)
+                        Minecraft.getInstance().getTextureManager().release(ALBUM_TEX_ID);
                         Minecraft.getInstance().getTextureManager()
                                 .register(ALBUM_TEX_ID,
-                                        new DynamicTexture(() -> "craftify-album-art", img));
+                                        new DynamicTexture(() -> "craftify-album-art", square));
+                        artTexW = square.getWidth();
+                        artTexH = square.getHeight();
                         textureRegistered = true;
                     } catch (Exception e) {
                         Craftify.LOGGER.warn("album art register failed: {}",
@@ -284,6 +301,42 @@ public final class YtmHud {
             }
         });
     }
+
+    /** Crop an image to a centered square (youtube thumbs are 16:9 letterboxed). */
+    private static NativeImage centerCropSquare(NativeImage img) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        if (w == h) return img;
+        int side = Math.min(w, h);
+        int x0 = (w - side) / 2;
+        int y0 = (h - side) / 2;
+        NativeImage out = new NativeImage(side, side, false);
+        out.copyRect(img, x0, y0, 0, 0, side, side, false, false);
+        img.close();
+        return out;
+    }
+
+    // ------------------------------------------------- position interpolation
+
+    private static long lastStateTime;
+    private static long lastStatePosition = -1;
+
+    private static YTMState advancePosition(YTMState s) {
+        long now = System.currentTimeMillis();
+        if (s.position != lastStatePosition || s.videoId.hashCode() != lastPosVideoHash) {
+            lastStateTime = now;
+            lastStatePosition = s.position;
+            lastPosVideoHash = s.videoId.hashCode();
+        }
+        if (!s.playing) return s;
+        long elapsed = (now - lastStateTime) / 1000L;
+        long advanced = s.position + elapsed;
+        if (advanced > s.duration && s.duration > 0) advanced = s.duration;
+        return new YTMState(s.playing, s.title, s.artist, s.album,
+                s.duration, advanced, s.videoId, s.albumArt);
+    }
+
+    private static int lastPosVideoHash;
 
     // ---------------------------------------------------------------- helpers
 

@@ -48,24 +48,19 @@
                 q("ytmusic-player-page")?.getAttribute("video-id") || "";
     }
 
-    // Album art: YTM exposes the player response thumbnails
+    // Album art: try the player bar's actual <img> first (most reliable -
+    // it's the real art YTM displays), then videoId-based thumbnail.
     let albumArt = "";
     try {
-      const playerPage = q("ytmusic-player-page");
-      const pr = playerPage && (playerPage.data || playerPage.__data);
-      const thumbs = pr && pr.playerResponse && pr.playerResponse.videoDetails &&
-                     pr.playerResponse.videoDetails.thumbnail &&
-                     pr.playerResponse.videoDetails.thumbnail.thumbnails;
-      if (thumbs && thumbs.length) {
-        // pick the biggest thumbnail
-        let best = thumbs[0];
-        for (const t of thumbs) if (t.width > best.width) best = t;
-        albumArt = best.url || "";
-      }
+      const barArt = q("ytmusic-player-bar img#img") ||
+                     q("ytmusic-player-bar .yt-img-shadow") ||
+                     q("ytmusic-player-bar image[src]") ||
+                     q("ytmusic-player-bar img");
+      const src = barArt && (barArt.getAttribute("src") || barArt.getAttribute("href"));
+      if (src && src.startsWith("http")) albumArt = src;
     } catch (e) { /* best-effort */ }
-    // Fallback: standard YT thumbnail by videoId
     if (!albumArt && videoId) {
-      albumArt = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+      albumArt = "https://i.ytimg.com/vi/" + videoId + "/maxresdefault.jpg";
     }
 
     return {
