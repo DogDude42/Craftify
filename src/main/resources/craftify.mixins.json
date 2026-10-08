@@ -1,6 +1,0 @@
-{
-  "required": true,
-  "package": "net.gravtech.mixin",
-  "compatibilityLevel": "JAVA_8",
-  "mixins": []
-}
