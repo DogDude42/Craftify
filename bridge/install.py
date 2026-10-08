@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Craftify YTM Bridge - Windows installer
 
 Registers the native messaging host manifest for Chrome AND Thorium:
@@ -50,14 +50,27 @@ def write_manifest(allowed_origin: str) -> str:
 
 
 def register(browser: str, reg_key: str, manifest_path: str) -> bool:
+    # Chromium native messaging: HKCU\...\NativeMessagingHosts\<host-name>
+    # is a KEY whose DEFAULT value is the path to the manifest JSON.
+    host_key = reg_key + "\\" + HOST_NAME
     try:
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, reg_key) as key:
-            winreg.SetValueEx(key, HOST_NAME, 0, winreg.REG_SZ, manifest_path)
-        print(f"  [ok] {browser}: registered {reg_key}\\{HOST_NAME}")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, host_key) as key:
+            winreg.SetValueEx(key, None, 0, winreg.REG_SZ, manifest_path)
+        print(f"  [ok] {browser}: registered {host_key} (default = manifest path)")
         return True
     except OSError as e:
         print(f"  [!] {browser}: registration failed: {e}")
         return False
+
+
+def cleanup_bad_value(reg_key: str) -> None:
+    """Remove the mis-registered value (not key) from earlier versions."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_key, 0,
+                            winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, HOST_NAME)
+    except OSError:
+        pass  # nothing to clean
 
 
 def main() -> None:
@@ -92,6 +105,7 @@ def main() -> None:
     write_manifest(origin)
 
     for browser, reg_key in BROWSERS.items():
+        cleanup_bad_value(reg_key)
         register(browser, reg_key, MANIFEST_PATH)
 
     print()

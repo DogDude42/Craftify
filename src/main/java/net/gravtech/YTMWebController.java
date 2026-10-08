@@ -131,13 +131,11 @@ public final class YTMWebController {
     }
 
     private synchronized void scheduleReconnect() {
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            log.error("Max reconnect attempts reached - YTM bridge unavailable");
-            return;
-        }
         reconnectAttempts++;
-        long delay = RECONNECT_DELAY_MS * reconnectAttempts;
-        log.info("Reconnecting in {}ms (attempt {}/{})", delay, reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+        // Linear backoff capped at 30s; retry forever - the browser/bridge
+        // may be closed for hours and the mod should reconnect when it's back.
+        long delay = Math.min(RECONNECT_DELAY_MS * reconnectAttempts, 30_000L);
+        log.info("Reconnecting in {}ms (attempt {})", delay, reconnectAttempts);
         scheduler.schedule(this::connect, delay, TimeUnit.MILLISECONDS);
     }
 
