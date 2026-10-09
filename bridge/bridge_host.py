@@ -19,6 +19,7 @@ import json
 import os
 import struct
 import sys
+import time
 from typing import Optional, Set
 
 try:
@@ -31,6 +32,38 @@ except ImportError:
 WS_HOST = "127.0.0.1"
 WS_PORT = 8765
 WS_PATH = "/youtube-music"
+
+
+LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge.lock")
+
+
+def kill_stale_instance() -> None:
+    """Kill any previous bridge host so this fresh instance owns port 8765."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE) as f:
+                try:
+                    old_pid = int(f.read().strip())
+                except ValueError:
+                    old_pid = 0
+            if old_pid and old_pid != os.getpid():
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                PROCESS_TERMINATE = 0x0001
+                h = kernel32.OpenProcess(PROCESS_TERMINATE, False, old_pid)
+                if h:
+                    kernel32.TerminateProcess(h, 0)
+                    kernel32.CloseHandle(h)
+                    print(f"[bridge] terminated stale bridge host pid {old_pid}",
+                          file=sys.stderr)
+                    time.sleep(0.3)
+    except Exception as e:
+        print(f"[bridge] stale-instance cleanup failed: {e}", file=sys.stderr)
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
 
 
 class Bridge:
@@ -122,6 +155,12 @@ class Bridge:
             print(f"[bridge] Minecraft mod disconnected", file=sys.stderr)
 
     async def ws_server(self) -> None:
+        # Single-instance takeover via PID lockfile: each host writes its PID
+        # to bridge.lock. A NEW host (spawned by a fresh service worker, so it
+        # holds the only live stdin to Chrome) kills any stale previous host
+        # before binding - otherwise the mod stays connected to a zombie whose
+        # native pipe died, forcing the user to refresh YTM to get state back.
+        kill_stale_instance()
         async with websockets.serve(self.handle_mc, WS_HOST, WS_PORT,
                                    max_size=2 ** 22, ping_interval=20,
                                    ping_timeout=20):

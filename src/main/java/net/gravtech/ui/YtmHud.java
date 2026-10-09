@@ -158,14 +158,18 @@ public final class YtmHud {
         if (showArt) {
             ensureAlbumArt(state);
             if (textureRegistered) {
-                // blit(pipeline, id, x, y, u, v, uW, uH, texW, texH, regionW, regionH):
-                // region = full texture; drawn region is (pad,pad)-(pad+artSize,pad+artSize)
+                // blit(pipeline, id, x, y, u, v, drawW, drawH, regionW, regionH,
+                //      texW, texH) - draw size comes FIRST among the int pairs,
+                // texture dims LAST (UV normalizers). Previously swapped:
+                // drew 256x256 GUI px (whole widget) and u2 = 256/52 ~ 4.9
+                // -> art tiled ~5x across the screen. Now: draw artSize px,
+                // sample the full square texture, normalize by real dims.
                 g.blit(RenderPipelines.GUI_TEXTURED, ALBUM_TEX_ID,
                         pad, pad,
                         0.0f, 0.0f,
+                        artSize, artSize,
                         artTexW, artTexH,
-                        artTexW, artTexH,
-                        artSize, artSize);
+                        artTexW, artTexH);
             } else {
                 g.fill(pad, pad, pad + artSize, pad + artSize, COLOR_BUTTON);
                 g.text(font, "\u266B", pad + artSize / 2 - 3, pad + artSize / 2 - 4, COLOR_ARTIST);
@@ -470,22 +474,50 @@ public final class YtmHud {
     }
 
     // ------------------------------------------------- position interpolation
+    // Frame-driven clock: advances with real time every frame (never stalls),
+    // and on each state update absorbs only 30% of the difference toward the
+    // reported position - the report lags by the content-script -> SW ->
+    // native -> bridge -> WS pipeline latency, so snapping to it on every
+    // update made the clock visibly jump. Hard-sync only on song change,
+    // seek (>4s error), pause, or first state.
 
-    private static long lastStateTime;
-    private static double lastPosMs = -1;
+    private static long clockMs = -1;
+    private static long clockAnchorMs;
+    private static String clockVideoId = "";
+    private static boolean clockRunning;
 
     private static YTMState advancePosition(YTMState s) {
         long now = System.currentTimeMillis();
-        if (s.positionMs != lastPosMs) {
-            lastStateTime = now;
-            lastPosMs = s.positionMs;
+        boolean songChanged = !s.videoId.equals(clockVideoId);
+        if (songChanged) clockVideoId = s.videoId;
+
+        long live = liveMs(now);
+        boolean hardSync = songChanged || clockMs < 0 || !s.playing
+                || Math.abs(s.positionMs - live) > 4000L;
+        if (hardSync) {
+            clockMs = s.positionMs;
+            clockAnchorMs = now;
+            clockRunning = s.playing;
+            long shown = Math.min(clockMs,
+                    s.durationMs > 0 ? s.durationMs : clockMs);
+            return withPosition(s, shown);
         }
-        if (!s.playing) return s;
-        double elapsedMs = now - lastStateTime;
-        double advanced = s.positionMs + elapsedMs;
-        if (s.durationMs > 0 && advanced > s.durationMs) advanced = s.durationMs;
+        // gentle correction: absorb 30% of the error into the clock
+        long error = s.positionMs - live;
+        clockMs = live + (long) (error * 0.3);
+        clockAnchorMs = now;
+        long shown = Math.min(liveMs(now),
+                s.durationMs > 0 ? s.durationMs : Long.MAX_VALUE);
+        return withPosition(s, shown);
+    }
+
+    private static long liveMs(long now) {
+        return clockRunning ? clockMs + (now - clockAnchorMs) : clockMs;
+    }
+
+    private static YTMState withPosition(YTMState s, long posMs) {
         return new YTMState(s.playing, s.title, s.artist, s.album,
-                s.durationMs, (long) advanced, s.videoId, s.albumArt, s.albumArtPng);
+                s.durationMs, Math.max(0, posMs), s.videoId, s.albumArt, s.albumArtPng);
     }
 
     // ---------------------------------------------------------------- helpers
