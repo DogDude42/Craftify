@@ -229,19 +229,50 @@
       const shuffleBtn = q("ytmusic-player-bar .shuffle button") ||
                          q("ytmusic-player-bar .shuffle");
       if (shuffleBtn) {
-        const label = (shuffleBtn.getAttribute("aria-label") || "").toLowerCase();
-        // when ON, the label is just "Shuffle"; when OFF it appends something
-        // like "off" / a state suffix - check the button's aria-pressed OR
-        // the yt-icon's aria-hidden pattern. Most robust: aria-pressed if
-        // present, else label heuristics.
         const pressed = shuffleBtn.getAttribute("aria-pressed");
-        if (pressed !== null) {
+        if (pressed === "true" || pressed === "false") {
           shuffle = pressed === "true";
         } else {
-          shuffle = label === "shuffle" || label.includes("on");
+          shuffle = readShuffleFromStore();
         }
       }
     } catch (e) { /* best-effort */ }
+
+    let storeShapeLogged = false;
+
+    function readShuffleFromStore() {
+      // YTM keeps the authoritative shuffle flag in its redux store; every
+      // polymer element exposes .store. Probe common slice/key shapes
+      // null-safely so whichever YTM build runs, we find it.
+      try {
+        const bar = q("ytmusic-player-bar") || q("ytmusic-app-layout");
+        const store = bar && bar.store;
+        if (store && store.getState) {
+          const st = store.getState();
+          if (!storeShapeLogged) {
+            storeShapeLogged = true;
+            try {
+              const keys = (o) => o ? Object.keys(o).slice(0, 25) : null;
+              console.log("[craftify] store shape: top:", keys(st),
+                "| queue:", keys(st.queue), "| player:", keys(st.player));
+            } catch (e) {}
+          }
+          const probe = (obj, keys) => {
+            if (!obj) return undefined;
+            for (const k of keys) {
+              if (typeof obj[k] === "boolean") return obj[k];
+            }
+            return undefined;
+          };
+          const q1 = st.queue, p1 = st.player;
+          return probe(q1, ["shuffleEnabled", "shuffle", "isShuffled", "shuffled"])
+              ?? probe(p1, ["shuffleEnabled", "shuffle", "isShuffled", "shuffled"])
+              ?? probe(st, ["shuffleEnabled", "shuffle", "isShuffled", "shuffled"])
+              ?? false;
+        }
+      } catch (e) { /* best-effort */ }
+      return false;
+    }
 
     return {
       type: "state",
