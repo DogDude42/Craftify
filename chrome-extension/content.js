@@ -98,11 +98,20 @@
     const playerPage = q("ytmusic-player-page");
     const playButton = q("ytmusic-player-bar .play-pause-button") ||
                       q("#play-pause-button");
-    // Playing when the button's aria-label says "Pause" (i.e. a pause action offered)
+    // Playing when the button's aria-label offers "Pause" (YTM i18n:
+    // "Pause" shown while playing, "Play" while paused).
     let playing = false;
     if (playButton) {
       const label = (playButton.getAttribute("aria-label") || "").toLowerCase();
       playing = label.includes("pause");
+    }
+    // Cross-check with the bound video element (authoritative during
+    // transitions when the label lags)
+    const pVideo = getActiveVideo();
+    if (pVideo) {
+      const vPlaying = !pVideo.paused && !pVideo.ended;
+      // trust the element when it disagrees hard with the label
+      if (vPlaying !== playing) playing = vPlaying;
     }
     const title = playerPage?.getAttribute("title") ||
                   q("ytmusic-player-bar .title")?.getAttribute("title") ||
@@ -199,17 +208,39 @@
         }).catch(() => {});
     }
 
-    // loop & shuffle toggle states (aria-pressed on the player bar buttons)
-    let loop = false, shuffle = false;
+    // Repeat + shuffle states. NOTE: these toggle buttons do NOT expose
+    // aria-pressed. Verified against the live DOM + YTM's own i18n table
+    // (REPEAT_OFF "Repeat off" / REPEAT_ALL "Repeat all" / REPEAT_ONE
+    // "Repeat one" / REPEAT_DISABLED "Repeat disabled" / SHUFFLE "Shuffle"):
+    // the state lives in the button's aria-LABEL text, and the buttons sit
+    // in .right-controls-buttons as .repeat and .shuffle.
+    // Repeat is THREE-state: NONE -> ALL -> ONE (string "repeat").
+    let loop = "NONE"; // "NONE" | "ALL" | "ONE"
+    let shuffle = false;
     try {
-      const loopBtn = [...document.querySelectorAll(
-          "ytmusic-player-bar tp-yt-paper-icon-button[slot=repeat]")][0] ||
-          q("ytmusic-player-bar [aria-label*=repeat i]");
-      if (loopBtn) loop = loopBtn.getAttribute("aria-pressed") === "true";
-      const shuffleBtn = [...document.querySelectorAll(
-          "ytmusic-player-bar tp-yt-paper-icon-button[slot=shuffle]")][0] ||
-          q("ytmusic-player-bar [aria-label*=shuffle i]");
-      if (shuffleBtn) shuffle = shuffleBtn.getAttribute("aria-pressed") === "true";
+      const repeatBtn = q("ytmusic-player-bar .repeat button") ||
+                        q("ytmusic-player-bar .repeat");
+      if (repeatBtn) {
+        const label = (repeatBtn.getAttribute("aria-label") || "").toLowerCase();
+        if (label.includes("one")) loop = "ONE";
+        else if (label.includes("all")) loop = "ALL";
+        else if (label.includes("off") || label.includes("disabled")) loop = "NONE";
+      }
+      const shuffleBtn = q("ytmusic-player-bar .shuffle button") ||
+                         q("ytmusic-player-bar .shuffle");
+      if (shuffleBtn) {
+        const label = (shuffleBtn.getAttribute("aria-label") || "").toLowerCase();
+        // when ON, the label is just "Shuffle"; when OFF it appends something
+        // like "off" / a state suffix - check the button's aria-pressed OR
+        // the yt-icon's aria-hidden pattern. Most robust: aria-pressed if
+        // present, else label heuristics.
+        const pressed = shuffleBtn.getAttribute("aria-pressed");
+        if (pressed !== null) {
+          shuffle = pressed === "true";
+        } else {
+          shuffle = label === "shuffle" || label.includes("on");
+        }
+      }
     } catch (e) { /* best-effort */ }
 
     return {
@@ -221,7 +252,8 @@
         durationMs: Math.round(duration * 1000),
         videoId, albumArt,
         albumArtPng: lastArtPng,
-        loop, shuffle
+        loopMode: loop,          // "NONE" | "ALL" | "ONE"
+        shuffle
       }
     };
   }
@@ -251,17 +283,15 @@
     next()   { return clickButton("ytmusic-player-bar .next-button, .next-button"); },
     prev()   { return clickButton("ytmusic-player-bar .previous-button, .previous-button"); },
     loop()   {
-      const btn = [...document.querySelectorAll(
-          "ytmusic-player-bar tp-yt-paper-icon-button[slot=repeat]")][0] ||
-          q("ytmusic-player-bar [aria-label*=repeat i]");
-      if (btn) { btn.click(); sendState(); return true; }
+      const btn = q("ytmusic-player-bar .repeat button") ||
+                  q("ytmusic-player-bar .repeat");
+      if (btn) { btn.click(); setTimeout(sendState, 150); return true; }
       return false;
     },
     shuffle() {
-      const btn = [...document.querySelectorAll(
-          "ytmusic-player-bar tp-yt-paper-icon-button[slot=shuffle]")][0] ||
-          q("ytmusic-player-bar [aria-label*=shuffle i]");
-      if (btn) { btn.click(); sendState(); return true; }
+      const btn = q("ytmusic-player-bar .shuffle button") ||
+                  q("ytmusic-player-bar .shuffle");
+      if (btn) { btn.click(); setTimeout(sendState, 150); return true; }
       return false;
     },
     // YTM has no user-facing seek-by-N UI, so skip unsupported actions gracefully

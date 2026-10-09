@@ -46,15 +46,15 @@ public final class YTMWebController {
         public final String albumArt;
         /** Canvas-re-encoded PNG data URL (webp-proof album art). */
         public final String albumArtPng;
-        /** Repeat-all/one toggle state (aria-pressed on the player bar). */
-        public final boolean loop;
+        /** Repeat state: "NONE", "ALL" (repeat queue), or "ONE" (repeat song). */
+        public final String loopMode;
         /** Shuffle toggle state. */
         public final boolean shuffle;
 
         public YTMState(boolean playing, String title, String artist, String album,
                          long durationMs, long positionMs, String videoId,
                          String albumArt, String albumArtPng,
-                         boolean loop, boolean shuffle) {
+                         String loopMode, boolean shuffle) {
             this.playing = playing;
             this.title = title;
             this.artist = artist;
@@ -64,7 +64,7 @@ public final class YTMWebController {
             this.videoId = videoId;
             this.albumArt = albumArt == null ? "" : albumArt;
             this.albumArtPng = albumArtPng == null ? "" : albumArtPng;
-            this.loop = loop;
+            this.loopMode = loopMode == null || loopMode.isEmpty() ? "NONE" : loopMode;
             this.shuffle = shuffle;
         }
     }
@@ -192,7 +192,7 @@ public final class YTMWebController {
                     getAsString(obj, "videoId", ""),
                     getAsString(obj, "albumArt", ""),
                     getAsString(obj, "albumArtPng", ""),
-                    getAsBool(obj, "loop", false),
+                    getAsString(obj, "loopMode", "NONE"),
                     getAsBool(obj, "shuffle", false));
             this.lastState = state;
             if (firstStateLogged == false) {

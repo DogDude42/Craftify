@@ -236,17 +236,28 @@ public final class YtmHud {
             drawBtn(g, font, bx, by, btnW, btnH, "\u23EE",
                     in(msX, msY, bx, by, btnW, btnH));
             int pbx = bx + btnW + gap;
-            drawBtn(g, font, pbx, by, btnW, btnH,
-                    state.playing ? "\u23F8" : "\u25B6",
-                    in(msX, msY, pbx, by, btnW, btnH));
+            // Play/pause glyph shows the CURRENT state (pause glyph while
+            // paused, play glyph while playing) + state echo: accent fill
+            // while playing so the state reads at a glance.
+            boolean pHover = in(msX, msY, pbx, by, btnW, btnH);
+            g.fill(pbx, by, pbx + btnW, by + btnH,
+                    pHover ? COLOR_BUTTON_HOVER : COLOR_BUTTON);
+            String pGlyph = state.playing ? "\u25B6" : "\u23F8";
+            int pgw = font.width(pGlyph);
+            g.text(font, pGlyph, pbx + (btnW - pgw) / 2, by + (btnH - 8) / 2,
+                    state.playing ? CraftifyConfig.get().accentRgb() : COLOR_BUTTON_TEXT);
             int nbx = bx + (btnW + gap) * 2;
             drawBtn(g, font, nbx, by, btnW, btnH, "\u23ED",
                     in(msX, msY, nbx, by, btnW, btnH));
-            // loop: show state - filled (accent) when ON, grey when OFF
+            // loop 3-state: off (grey), ALL (accent, ring), ONE (accent, "1")
             int lbx = bx + (btnW + gap) * 3;
-            drawToggleBtn(g, font, lbx, by, btnW, btnH, "\u21BB",
-                    state.loop, in(msX, msY, lbx, by, btnW, btnH));
-            // shuffle
+            boolean loopAll = "ALL".equals(state.loopMode);
+            boolean loopOne = "ONE".equals(state.loopMode);
+            boolean loopOn = loopAll || loopOne;
+            drawToggleBtn(g, font, lbx, by, btnW, btnH,
+                    loopOne ? "\u21BB1" : "\u21BB",
+                    loopOn, in(msX, msY, lbx, by, btnW, btnH));
+            // shuffle toggle: accent when ON, grey when OFF
             int sbx = bx + (btnW + gap) * 4;
             drawToggleBtn(g, font, sbx, by, btnW, btnH, "\u292E",
                     state.shuffle, in(msX, msY, sbx, by, btnW, btnH));
@@ -600,7 +611,7 @@ public final class YtmHud {
     private static YTMState withPosition(YTMState s, long posMs) {
         return new YTMState(s.playing, s.title, s.artist, s.album,
                 s.durationMs, Math.max(0, posMs), s.videoId, s.albumArt,
-                s.albumArtPng, s.loop, s.shuffle);
+                s.albumArtPng, s.loopMode, s.shuffle);
     }
 
     // ---------------------------------------------------------------- helpers
