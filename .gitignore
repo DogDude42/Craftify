@@ -13,3 +13,4 @@ __pycache__/
 *.pyc
 bridge/craftify_ytm_bridge_manifest.json
 bridge/craftify_ytm_bridge.bat
+bridge.lock

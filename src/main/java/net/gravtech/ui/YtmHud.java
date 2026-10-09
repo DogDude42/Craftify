@@ -474,41 +474,73 @@ public final class YtmHud {
     }
 
     // ------------------------------------------------- position interpolation
-    // Frame-driven clock: advances with real time every frame (never stalls),
-    // and on each state update absorbs only 30% of the difference toward the
-    // reported position - the report lags by the content-script -> SW ->
-    // native -> bridge -> WS pipeline latency, so snapping to it on every
-    // update made the clock visibly jump. Hard-sync only on song change,
-    // seek (>4s error), pause, or first state.
+    // Smooth latency-compensated clock:
+    //  - advances in real time every frame (never stalls, never skips)
+    //  - reports lag by the pipeline latency; that latency is tracked with an
+    //    outlier-rejected EMA and compensated before comparing
+    //  - corrections are FORWARD-ONLY and gentle (30% absorb) - the old code
+    //    absorbed 30% of NEGATIVE errors too, dragging the clock ~0.5s back
+    //    on every update = the visible "occasional skips"
+    //  - hard-sync on song change - keyed by TITLE: YTM autoplay leaves the
+    //    videoId/URL stale, so the old videoId-keyed reset NEVER FIRED and
+    //    the clock kept counting the old song's position into the next song
+    //    (user saw the time "extend" and lengths stack up)
 
-    private static long clockMs = -1;
+    private static long clockMs;
     private static long clockAnchorMs;
-    private static String clockVideoId = "";
+    private static String clockSongKey = "";
     private static boolean clockRunning;
+    private static boolean clockInit;
+    private static long latencyEma; // typical (report - display) while playing
 
     private static YTMState advancePosition(YTMState s) {
         long now = System.currentTimeMillis();
-        boolean songChanged = !s.videoId.equals(clockVideoId);
-        if (songChanged) clockVideoId = s.videoId;
+        String songKey = s.title + "|" + s.videoId;
+        boolean songChanged = clockInit && !songKey.equals(clockSongKey);
+        if (songChanged) {
+            Craftify.LOGGER.info("Song changed: {} (pos {}ms / dur {}ms)",
+                    s.title, s.positionMs, s.durationMs);
+        }
+        clockSongKey = songKey;
 
-        long live = liveMs(now);
-        boolean hardSync = songChanged || clockMs < 0 || !s.playing
-                || Math.abs(s.positionMs - live) > 4000L;
-        if (hardSync) {
+        long shown;
+        if (!clockInit || songChanged) {
+            clockInit = true;
             clockMs = s.positionMs;
             clockAnchorMs = now;
             clockRunning = s.playing;
-            long shown = Math.min(clockMs,
-                    s.durationMs > 0 ? s.durationMs : clockMs);
-            return withPosition(s, shown);
+            latencyEma = 0;
+            shown = clockMs;
+        } else if (!s.playing) {
+            // paused: the report is authoritative - freeze exactly on it
+            clockRunning = false;
+            clockMs = s.positionMs;
+            clockAnchorMs = now;
+            shown = clockMs;
+        } else {
+            long live = liveMs(now);
+            long err = s.positionMs - live;          // ~ -latency while stable
+            // latency estimate from inliers only (rejects seek outliers)
+            if (Math.abs(err - latencyEma) < 1500L) {
+                latencyEma = (latencyEma * 4 + err) / 5;
+            }
+            long errAdj = err - latencyEma;          // latency-compensated
+            if (errAdj > 2500L || errAdj < -5000L) {
+                // seek / stall / element swap: snap to the report
+                clockMs = s.positionMs;
+                clockAnchorMs = now;
+            } else if (errAdj > 120L) {
+                // display behind report: gently catch up (absorb 30%)
+                clockMs = live + errAdj * 30 / 100;
+                clockAnchorMs = now;
+            }
+            // otherwise: keep ticking - a report that is merely BEHIND (the
+            // normal case) must never drag the clock backwards
+            clockRunning = true;
+            shown = liveMs(now);
         }
-        // gentle correction: absorb 30% of the error into the clock
-        long error = s.positionMs - live;
-        clockMs = live + (long) (error * 0.3);
-        clockAnchorMs = now;
-        long shown = Math.min(liveMs(now),
-                s.durationMs > 0 ? s.durationMs : Long.MAX_VALUE);
-        return withPosition(s, shown);
+        if (s.durationMs > 0 && shown > s.durationMs) shown = s.durationMs;
+        return withPosition(s, Math.max(0L, shown));
     }
 
     private static long liveMs(long now) {
