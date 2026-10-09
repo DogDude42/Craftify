@@ -49,16 +49,18 @@
         Math.min(bmp.width, bmp.height), Math.min(bmp.width, bmp.height),
         0, 0, side, side);
     return await new Promise((resolve) => {
-      // JPEG, not PNG: photos compress ~10x smaller and the mod's stb_image
-      // decodes JPEG natively (webp was the only undecodable format).
-      // The wire field is still named albumArtPng for compatibility.
+      // PNG is REQUIRED: verified against the actual 26.1.2 NativeImage
+      // (stb pipeline) - it decodes PNG only; JPEG bytes throw
+      // "Bad PNG Signature" (tested with real files via NativeImageTest).
+      // 256px PNG is ~60-150KB; the mod's WebSocket frame buffering
+      // handles multi-frame messages fine now.
       canvas.toBlob((b) => {
         if (!b) return resolve(null);
         const fr = new FileReader();
         fr.onload = () => resolve(fr.result);
         fr.onerror = () => resolve(null);
         fr.readAsDataURL(b);
-      }, "image/jpeg", 0.85);
+      }, "image/png");
     });
   }
 
