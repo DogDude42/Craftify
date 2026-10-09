@@ -6,6 +6,34 @@
   let lastArtConverted = "";
   let lastArtPng = "";
 
+  // ---- stable video binding ----
+  let activeVideo = null;
+
+  function findActiveVideo() {
+    // the playing one, else the one inside ytmusic-player with sane duration
+    let playing = null;
+    let player = q("ytmusic-player video");
+    document.querySelectorAll("video").forEach(v => {
+      const dur = parseFloat(v.duration);
+      if (!v.paused && !isNaN(dur) && dur > 1 && isFinite(dur)) playing = v;
+    });
+    if (playing) return playing;
+    if (player) {
+      const dur = parseFloat(player.duration);
+      if (!isNaN(dur) && dur > 1 && isFinite(dur)) return player;
+    }
+    return null;
+  }
+
+  function getActiveVideo() {
+    if (activeVideo && activeVideo.isConnected &&
+        !isNaN(parseFloat(activeVideo.duration))) {
+      return activeVideo;
+    }
+    activeVideo = findActiveVideo();
+    return activeVideo;
+  }
+
   const ART_CAP = 256; // HUD art is drawn small; 256px is sharp enough
   // and keeps the data URL tiny (~10-20KB as JPEG).
 
@@ -87,22 +115,11 @@
     if (albumEl) album = albumEl.textContent.trim();
 
     let duration = 0, position = 0;
-    // The player's <video> gives TRUE sub-second currentTime/duration.
-    // IMPORTANT: YTM has several <video> elements in the DOM (previews,
-    // miniplayer stubs). The player's one lives inside <ytmusic-player>
-    // (or is the only one with a real, finite, non-zero duration AND
-    // currentSrc). Picking document's first <video> previously returned
-    // a PREVIEW's timeline (user saw 4:41/6:47 while playing 1:33/4:07).
-    const playerEl = q("ytmusic-player video") || q("video");
-    let video = null;
-    document.querySelectorAll("video").forEach(v => {
-      const dur = parseFloat(v.duration);
-      if (!v.paused && !isNaN(dur) && dur > 1 && isFinite(dur)) video = v;
-    });
-    if (!video && playerEl) {
-      const dur = parseFloat(playerEl.duration);
-      if (!isNaN(dur) && dur > 1 && isFinite(dur)) video = playerEl;
-    }
+    // Cached player <video>: YTM has several <video> elements (previews,
+    // miniplayer stubs) - picking the first each poll bound to a PREVIEW's
+    // timeline and produced wild positions/skips. Bind once to the real
+    // player element, revalidate lazily, and never rescan while healthy.
+    const video = getActiveVideo();
     if (video) {
       const cur = parseFloat(video.currentTime);
       const dur = parseFloat(video.duration);
@@ -161,6 +178,19 @@
         }).catch(() => {});
     }
 
+    // loop & shuffle toggle states (aria-pressed on the player bar buttons)
+    let loop = false, shuffle = false;
+    try {
+      const loopBtn = [...document.querySelectorAll(
+          "ytmusic-player-bar tp-yt-paper-icon-button[slot=repeat]")][0] ||
+          q("ytmusic-player-bar [aria-label*=repeat i]");
+      if (loopBtn) loop = loopBtn.getAttribute("aria-pressed") === "true";
+      const shuffleBtn = [...document.querySelectorAll(
+          "ytmusic-player-bar tp-yt-paper-icon-button[slot=shuffle]")][0] ||
+          q("ytmusic-player-bar [aria-label*=shuffle i]");
+      if (shuffleBtn) shuffle = shuffleBtn.getAttribute("aria-pressed") === "true";
+    } catch (e) { /* best-effort */ }
+
     return {
       type: "state",
       state: {
@@ -169,7 +199,8 @@
         positionMs: Math.round(position * 1000),
         durationMs: Math.round(duration * 1000),
         videoId, albumArt,
-        albumArtPng: lastArtPng
+        albumArtPng: lastArtPng,
+        loop, shuffle
       }
     };
   }
@@ -198,6 +229,20 @@
     pause()  { return clickButton("ytmusic-player-bar .play-pause-button, #play-pause-button"); },
     next()   { return clickButton("ytmusic-player-bar .next-button, .next-button"); },
     prev()   { return clickButton("ytmusic-player-bar .previous-button, .previous-button"); },
+    loop()   {
+      const btn = [...document.querySelectorAll(
+          "ytmusic-player-bar tp-yt-paper-icon-button[slot=repeat]")][0] ||
+          q("ytmusic-player-bar [aria-label*=repeat i]");
+      if (btn) { btn.click(); sendState(); return true; }
+      return false;
+    },
+    shuffle() {
+      const btn = [...document.querySelectorAll(
+          "ytmusic-player-bar tp-yt-paper-icon-button[slot=shuffle]")][0] ||
+          q("ytmusic-player-bar [aria-label*=shuffle i]");
+      if (btn) { btn.click(); sendState(); return true; }
+      return false;
+    },
     // YTM has no user-facing seek-by-N UI, so skip unsupported actions gracefully
     seek()   { return false; },
     volume() { return false; }
@@ -238,6 +283,27 @@
 
   document.addEventListener("yt-navigate-finish", throttledSend);
   window.addEventListener("focus", throttledSend);
+
+  // Fresh state straight from the player element, 4x/sec while playing:
+  // guarantees sub-second-fresh positions even if the SW poll stalls.
+  function attachVideoListeners() {
+    const v = getActiveVideo();
+    if (!v || v.__craftifyBound) return;
+    v.__craftifyBound = true;
+    v.addEventListener("timeupdate", throttledSend);
+    v.addEventListener("play", throttledSend);
+    v.addEventListener("pause", throttledSend);
+    v.addEventListener("ended", throttledSend);
+    v.addEventListener("loadedmetadata", () => {
+      // new element got metadata - rebind listeners
+      activeVideo = null;
+      attachVideoListeners();
+      throttledSend();
+    });
+  }
+  attachVideoListeners();
+  // rebind occasionally as YTM swaps elements between songs
+  setInterval(attachVideoListeners, 2000);
 
 
   sendState();

@@ -46,10 +46,15 @@ public final class YTMWebController {
         public final String albumArt;
         /** Canvas-re-encoded PNG data URL (webp-proof album art). */
         public final String albumArtPng;
+        /** Repeat-all/one toggle state (aria-pressed on the player bar). */
+        public final boolean loop;
+        /** Shuffle toggle state. */
+        public final boolean shuffle;
 
         public YTMState(boolean playing, String title, String artist, String album,
                          long durationMs, long positionMs, String videoId,
-                         String albumArt, String albumArtPng) {
+                         String albumArt, String albumArtPng,
+                         boolean loop, boolean shuffle) {
             this.playing = playing;
             this.title = title;
             this.artist = artist;
@@ -59,6 +64,8 @@ public final class YTMWebController {
             this.videoId = videoId;
             this.albumArt = albumArt == null ? "" : albumArt;
             this.albumArtPng = albumArtPng == null ? "" : albumArtPng;
+            this.loop = loop;
+            this.shuffle = shuffle;
         }
     }
 
@@ -184,7 +191,9 @@ public final class YTMWebController {
                     positionMs,
                     getAsString(obj, "videoId", ""),
                     getAsString(obj, "albumArt", ""),
-                    getAsString(obj, "albumArtPng", ""));
+                    getAsString(obj, "albumArtPng", ""),
+                    getAsBool(obj, "loop", false),
+                    getAsBool(obj, "shuffle", false));
             this.lastState = state;
             if (firstStateLogged == false) {
                 firstStateLogged = true;
@@ -257,6 +266,11 @@ public final class YTMWebController {
     public void pause() { sendCommand("pause", null); }
     public void nextTrack() { sendCommand("next", null); }
     public void previousTrack() { sendCommand("prev", null); }
+
+    /** Generic command hook for HUD toggle buttons (loop / shuffle / ...). */
+    public void sendCommand(String action) {
+        sendCommand(action, null);
+    }
 
     public void seek(long position) {
         JsonObject o = new JsonObject();

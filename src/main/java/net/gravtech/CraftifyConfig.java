@@ -46,6 +46,8 @@ public final class CraftifyConfig {
     public boolean showAlbumArt = true;  // NEW
     /** NEW: accent color preset. */
     public String accentColor = "pink";  // pink | blue | green | mauve | red | yellow
+    /** NEW: background opacity 0..100 (100 = solid). */
+    public int backgroundOpacity = 94;
 
     /** Bump when config semantics change (migration trigger). */
     public int configVersion = 2;
@@ -113,6 +115,13 @@ public final class CraftifyConfig {
     }
 
     // ------------------------------------------------------------ helpers
+
+    /** BG color with configured opacity applied (0..100 -> alpha 0..255). */
+    public int backgroundArgb(boolean hover) {
+        int alpha = (int) Math.round(255 * Math.max(0, Math.min(100, backgroundOpacity)) / 100.0);
+        int rgb = hover ? 0x181825 : 0x1E1E2E; // mantle : base (Catppuccin Mocha)
+        return (alpha << 24) | rgb;
+    }
 
     public int accentRgb() {
         // Catppuccin Mocha accents

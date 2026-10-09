@@ -93,6 +93,12 @@ public class ConfigScreen extends Screen {
                 v -> CraftifyConfig.update(g -> g.widgetH = v)));
         y += 24;
 
+        // ---- Opacity (sliders) ----
+        addRenderableWidget(new IntSlider(cx - btnW / 2, y, btnW, 20,
+                "Opacity %", c.backgroundOpacity, 0, 100,
+                v -> CraftifyConfig.update(g -> g.backgroundOpacity = v)));
+        y += 24;
+
         // ---- Announcements ----
         addRenderableWidget(CycleButton.onOffBuilder(c.announcementEnabled)
                 .create(cx - btnW / 2, y, btnW, 20,

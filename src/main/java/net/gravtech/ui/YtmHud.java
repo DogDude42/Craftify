@@ -131,8 +131,8 @@ public final class YtmHud {
         hovered = in(mouseX, mouseY, x, y, w, h);
         drewLastFrame = true;
 
-        // background + hover outline
-        g.fill(x, y, x + w, y + h, hovered ? COLOR_BG_HOVER : COLOR_BG);
+        // background + hover outline (opacity from config)
+        g.fill(x, y, x + w, y + h, cfg.backgroundArgb(hovered));
         if (hovered) {
             g.outline(x, y, w, h, accent);
         }
@@ -223,9 +223,10 @@ public final class YtmHud {
         }
 
         // ---- hover controls (hidden while resizing) ----
+        // prev | play-pause | next | loop | shuffle
         if (showCtrls) {
             int btnH = 14, btnW = 16, gap = 6;
-            int totalW = btnW * 3 + gap * 2;
+            int totalW = btnW * 5 + gap * 4;
             int bx = (sw - totalW) / 2;
             int by = sh - btnH - pad;
 
@@ -241,6 +242,14 @@ public final class YtmHud {
             int nbx = bx + (btnW + gap) * 2;
             drawBtn(g, font, nbx, by, btnW, btnH, "\u23ED",
                     in(msX, msY, nbx, by, btnW, btnH));
+            // loop: show state - filled (accent) when ON, grey when OFF
+            int lbx = bx + (btnW + gap) * 3;
+            drawToggleBtn(g, font, lbx, by, btnW, btnH, "\u21BB",
+                    state.loop, in(msX, msY, lbx, by, btnW, btnH));
+            // shuffle
+            int sbx = bx + (btnW + gap) * 4;
+            drawToggleBtn(g, font, sbx, by, btnW, btnH, "\u292E",
+                    state.shuffle, in(msX, msY, sbx, by, btnW, btnH));
         }
 
         // resize grip (always visible on hover, even while resizing)
@@ -344,6 +353,20 @@ public final class YtmHud {
         g.text(font, glyph, bx + (bw - gw) / 2, by + (bh - 8) / 2, COLOR_BUTTON_TEXT);
     }
 
+    /** Toggle button: accent-filled + accent glyph when ON, plain when OFF. */
+    private static void drawToggleBtn(GuiGraphicsExtractor g, Font font,
+                                     int bx, int by, int bw, int bh,
+                                     String glyph, boolean on, boolean hover) {
+        CraftifyConfig cfg = CraftifyConfig.get();
+        int accent = cfg.accentRgb();
+        int fill = on ? accent : (hover ? COLOR_BUTTON_HOVER : COLOR_BUTTON);
+        g.fill(bx, by, bx + bw, by + bh, fill);
+        int gw = font.width(glyph);
+        // dark glyph on the bright accent when ON, light on dark when OFF
+        g.text(font, glyph, bx + (bw - gw) / 2, by + (bh - 8) / 2,
+                on ? 0xFF181825 : COLOR_BUTTON_TEXT);
+    }
+
     // ---------------------------------------------------------------- interaction
 
     public static boolean onMouseClicked(double mouseX, double mouseY, int button) {
@@ -369,7 +392,7 @@ public final class YtmHud {
             int msX = round6((mouseX - x) / scale);
             int msY = round6((mouseY - y) / scale);
             int btnH = 14, btnW = 16, gap = 6;
-            int totalW = btnW * 3 + gap * 2;
+            int totalW = btnW * 5 + gap * 4;
             int bx = (sw - totalW) / 2;
             int by = sh - btnH - 4;
             if (in(msX, msY, bx, by, btnW, btnH)) {
@@ -385,6 +408,16 @@ public final class YtmHud {
             int nbx = bx + (btnW + gap) * 2;
             if (in(msX, msY, nbx, by, btnW, btnH)) {
                 controller.nextTrack();
+                return true;
+            }
+            int lbx = bx + (btnW + gap) * 3;
+            if (in(msX, msY, lbx, by, btnW, btnH)) {
+                controller.sendCommand("loop");
+                return true;
+            }
+            int sbx = bx + (btnW + gap) * 4;
+            if (in(msX, msY, sbx, by, btnW, btnH)) {
+                controller.sendCommand("shuffle");
                 return true;
             }
         }
@@ -549,7 +582,8 @@ public final class YtmHud {
 
     private static YTMState withPosition(YTMState s, long posMs) {
         return new YTMState(s.playing, s.title, s.artist, s.album,
-                s.durationMs, Math.max(0, posMs), s.videoId, s.albumArt, s.albumArtPng);
+                s.durationMs, Math.max(0, posMs), s.videoId, s.albumArt,
+                s.albumArtPng, s.loop, s.shuffle);
     }
 
     // ---------------------------------------------------------------- helpers
