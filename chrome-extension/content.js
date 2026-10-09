@@ -115,28 +115,49 @@
     if (albumEl) album = albumEl.textContent.trim();
 
     let duration = 0, position = 0;
-    // Cached player <video>: YTM has several <video> elements (previews,
-    // miniplayer stubs) - picking the first each poll bound to a PREVIEW's
-    // timeline and produced wild positions/skips. Bind once to the real
-    // player element, revalidate lazily, and never rescan while healthy.
+    // ATOMICITY: the title/artist come from the player-bar DOM, which
+    // updates instantly on a song change - but the cached <video> element
+    // still holds the OLD song's timeline during the transition. Reporting
+    // "new title + old position" made the HUD clock hard-sync to the old
+    // playhead at every song boundary. YTM's own time-info TEXT is rendered
+    // in the same UI pass as the title, so it is atomic with it. Strategy:
+    // trust the element's sub-second numbers ONLY while they agree with the
+    // text; on disagreement the element is stale -> use the text and force
+    // a rebind.
     const video = getActiveVideo();
+    let vPos = -1, vDur = -1, videoUsable = false;
     if (video) {
       const cur = parseFloat(video.currentTime);
       const dur = parseFloat(video.duration);
-      if (!isNaN(cur) && cur >= 0) position = cur;
-      if (!isNaN(dur) && dur > 0 && isFinite(dur)) duration = dur;
+      if (!isNaN(cur) && cur >= 0) vPos = cur;
+      if (!isNaN(dur) && dur > 0 && isFinite(dur)) vDur = dur;
+      videoUsable = video.readyState >= 2; // HAVE_CURRENT_DATA
     }
-    // sanity + fallback to the seconds-granular text
-    if (!duration || duration > 3600 || (position && position > duration)) {
-      const timeInfo = q("ytmusic-player-bar .time-info");
-      if (timeInfo) {
-        const m = timeInfo.textContent.match(/(\d+:\d+(?::\d+)?)/g);
-        if (m) {
-          position = parseTime(m[0]);
-          if (m[1]) duration = parseTime(m[1]);
-        }
+    let textPos = -1, textDur = -1;
+    const timeInfo = q("ytmusic-player-bar .time-info");
+    if (timeInfo) {
+      const m = timeInfo.textContent.match(/(\d+:\d+(?::\d+)?)/g);
+      if (m) {
+        textPos = parseTime(m[0]);
+        if (m[1]) textDur = parseTime(m[1]);
       }
     }
+    // element-vs-text agreement check (3s tolerance for UI refresh lag)
+    if (videoUsable && textPos >= 0 &&
+        (Math.abs(vPos - textPos) > 3 ||
+         (textDur > 0 && vDur > 0 && Math.abs(vDur - textDur) > 3))) {
+      videoUsable = false;
+      activeVideo = null; // stale element: force rescan + rebind next tick
+    }
+    if (videoUsable) {
+      position = vPos;
+      duration = vDur > 0 ? vDur : Math.max(0, textDur);
+    } else {
+      position = Math.max(0, textPos);
+      duration = Math.max(0, textDur);
+    }
+    // final sanity
+    if (duration > 0 && position > duration) position = duration;
     let videoId = "";
     try {
       const playerPage = q("ytmusic-player-page");

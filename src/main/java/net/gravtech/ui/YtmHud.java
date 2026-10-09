@@ -525,6 +525,7 @@ public final class YtmHud {
     private static boolean clockRunning;
     private static boolean clockInit;
     private static long latencyEma; // typical (report - display) while playing
+    private static int pendingSyncSkip; // stale boundary reports to skip
 
     private static YTMState advancePosition(YTMState s) {
         long now = System.currentTimeMillis();
@@ -538,12 +539,27 @@ public final class YtmHud {
 
         long shown;
         if (!clockInit || songChanged) {
-            clockInit = true;
-            clockMs = s.positionMs;
-            clockAnchorMs = now;
-            clockRunning = s.playing;
-            latencyEma = 0;
-            shown = clockMs;
+            // A song-change report may carry the OLD song's playhead (the
+            // video element lags the title). Positions deep into the track
+            // at a boundary are almost always stale bleed-through; if the
+            // report is suspicious, delay the hard-sync by one update.
+            boolean suspiciousBoundary = songChanged && s.durationMs > 0
+                    && s.positionMs > s.durationMs * 40 / 100
+                    && pendingSyncSkip < 2;
+            if (suspiciousBoundary) {
+                pendingSyncSkip++;
+                Craftify.LOGGER.debug("song-change report looks stale (pos {} / "
+                        + "dur {}); waiting one update before syncing",
+                        s.positionMs, s.durationMs);
+            } else {
+                pendingSyncSkip = 0;
+                clockInit = true;
+                clockMs = s.positionMs;
+                clockAnchorMs = now;
+                clockRunning = s.playing;
+                latencyEma = 0;
+            }
+            shown = liveMs(now);
         } else if (!s.playing) {
             // paused: the report is authoritative - freeze exactly on it
             clockRunning = false;
@@ -562,6 +578,7 @@ public final class YtmHud {
                 // seek / stall / element swap: snap to the report
                 clockMs = s.positionMs;
                 clockAnchorMs = now;
+                pendingSyncSkip = 0;
             } else if (errAdj > 120L) {
                 // display behind report: gently catch up (absorb 30%)
                 clockMs = live + errAdj * 30 / 100;
