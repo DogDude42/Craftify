@@ -47,6 +47,14 @@ async function requestStateFromAllTabs() {
   try {
     const tabs = await chrome.tabs.query({ url: "*://music.youtube.com/*" });
     LOG(`requesting state from ${tabs.length} YTM tab(s)`);
+    if (tabs.length === 0) {
+      // No YTM tab open: tell the bridge so it clears the mod's stale state
+      // (the HUD hides itself - no point showing a song nothing is playing).
+      if (nativePort) {
+        nativePort.postMessage({ type: "player-closed" });
+      }
+      return;
+    }
     for (const tab of tabs) {
       try {
         await chrome.tabs.sendMessage(tab.id, { type: "craftify-ytm-get-state" },

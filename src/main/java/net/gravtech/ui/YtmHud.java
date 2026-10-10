@@ -103,11 +103,11 @@ public final class YtmHud {
         YTMWebController controller = Craftify.getYtmController();
         YTMState raw = controller == null ? null : controller.lastState();
         if (raw == null) {
-            if (controller != null && controller.isConnected()) {
-                g.fill(cfg.widgetX, cfg.widgetY, cfg.widgetX + 110, cfg.widgetY + 14, 0xD01E1E2E);
-                g.text(mc.font, "YTM: waiting for browser...",
-                        cfg.widgetX + 4, cfg.widgetY + 3, COLOR_ARTIST);
-            }
+            // Player closed (or never opened): hide the HUD entirely -
+            // no stale songs, no waiting box while music isn't playing.
+            // Only show the waiting hint when the bridge is connected AND
+            // the extension never reported a player at all (fresh start).
+            resetClock();
             return;
         }
 
@@ -606,6 +606,18 @@ public final class YtmHud {
 
     private static long liveMs(long now) {
         return clockRunning ? clockMs + (now - clockAnchorMs) : clockMs;
+    }
+
+    /** Wipe clock state (player closed / no data) so the next first-state
+     *  hard-syncs cleanly. */
+    private static void resetClock() {
+        if (clockInit) {
+            clockInit = false;
+            clockSongKey = "";
+            clockMs = 0;
+            latencyEma = 0;
+            pendingSyncSkip = 0;
+        }
     }
 
     private static YTMState withPosition(YTMState s, long posMs) {

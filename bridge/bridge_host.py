@@ -188,6 +188,16 @@ def main() -> None:
                 print(f"[bridge] extension -> mod: {json.dumps(bridge.last_state)[:120]}",
                       file=sys.stderr)
                 await bridge.broadcast_state(bridge.last_state)
+            elif msg.get("type") == "player-closed":
+                # No YTM tab open: wipe the cached state and tell every mod
+                # client so the HUD hides instead of showing a stale song.
+                bridge.last_state = None
+                print("[bridge] player closed - clearing state", file=sys.stderr)
+                for ws in list(bridge.mc_clients):
+                    try:
+                        await ws.send(json.dumps({"type": "player-closed"}))
+                    except Exception:
+                        bridge.mc_clients.discard(ws)
 
     async def run() -> None:
         await asyncio.gather(

@@ -178,6 +178,16 @@ public final class YTMWebController {
     private void parseState(String json) {
         try {
             JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+            // Player closed (no YTM tab open): wipe everything so the HUD
+            // hides instead of showing a stale song.
+            if (obj.has("type") && "player-closed".equals(getAsString(obj, "type", ""))) {
+                lastState = null;
+                log.info("YTM player closed - state cleared");
+                for (YTMStateListener l : snapshotListeners()) {
+                    try { l.onDisconnected("player closed"); } catch (Exception ignored) {}
+                }
+                return;
+            }
             long durationMs = getAsLong(obj, "durationMs", 0L);
             long positionMs = getAsLong(obj, "positionMs", 0L);
             if (durationMs <= 0) durationMs = getAsLong(obj, "duration", 0L) * 1000L;
