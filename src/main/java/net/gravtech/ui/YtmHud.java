@@ -226,7 +226,7 @@ public final class YtmHud {
         // prev | play-pause | next | loop | shuffle
         if (showCtrls) {
             int btnH = 14, btnW = 16, gap = 6;
-            int totalW = btnW * 5 + gap * 4;
+            int totalW = btnW * 6 + gap * 5;
             int bx = (sw - totalW) / 2;
             int by = sh - btnH - pad;
 
@@ -261,6 +261,20 @@ public final class YtmHud {
             int sbx = bx + (btnW + gap) * 4;
             drawToggleBtn(g, font, sbx, by, btnW, btnH, "\u292E",
                     state.shuffle, in(msX, msY, sbx, by, btnW, btnH));
+
+            // volume: speaker glyph; muted = accent + crossed glyph.
+            // Scroll wheel adjusts (see onMouseScrolled), click toggles mute.
+            int vbx = bx + (btnW + gap) * 5;
+            boolean vHover = in(msX, msY, vbx, by, btnW, btnH);
+            String vGlyph = state.muted ? "\u2715" : "\u266B";
+            drawToggleBtn(g, font, vbx, by, btnW, btnH, vGlyph,
+                    state.muted, vHover);
+            // small % under the glyph when not muted
+            if (state.volume >= 0 && !state.muted) {
+                String vp = String.valueOf(state.volume);
+                g.text(font, vp, vbx + (btnW - font.width(vp)) / 2, by + 4,
+                        COLOR_BUTTON_TEXT);
+            }
         }
 
         // resize grip (always visible on hover, even while resizing)
@@ -403,7 +417,7 @@ public final class YtmHud {
             int msX = round6((mouseX - x) / scale);
             int msY = round6((mouseY - y) / scale);
             int btnH = 14, btnW = 16, gap = 6;
-            int totalW = btnW * 5 + gap * 4;
+            int totalW = btnW * 6 + gap * 5;
             int bx = (sw - totalW) / 2;
             int by = sh - btnH - 4;
             if (in(msX, msY, bx, by, btnW, btnH)) {
@@ -431,6 +445,15 @@ public final class YtmHud {
                 controller.sendCommand("shuffle");
                 return true;
             }
+            int vbx = bx + (btnW + gap) * 5;
+            if (in(msX, msY, vbx, by, btnW, btnH)) {
+                if (controller.lastState() != null && controller.lastState().muted) {
+                    controller.unmute();
+                } else {
+                    controller.toggleMute();
+                }
+                return true;
+            }
         }
 
         // drag anywhere else on the panel
@@ -444,6 +467,27 @@ public final class YtmHud {
         if (dragging || resizing) CraftifyConfig.save();
         dragging = false;
         resizing = false;
+    }
+
+    /**
+     * Scroll wheel over the widget adjusts YTM volume (5% per notch).
+     * Returns true if consumed (only when the widget is on screen).
+     */
+    public static boolean onMouseScrolled(double verticalDelta) {
+        if (!drewLastFrame) return false;
+        CraftifyConfig cfg = CraftifyConfig.get();
+        if (!cfg.enabled || hiddenBySession) return false;
+        YTMWebController controller = Craftify.getYtmController();
+        YTMState s = controller == null ? null : controller.lastState();
+        if (s == null || s.volume < 0) return false;
+        // scroll up = louder; MC sends positive for up
+        float step = 5.0f * (verticalDelta > 0 ? 1 : -1);
+        float target = Math.max(0f, Math.min(100f, s.volume + step));
+        if ((int) target != s.volume) {
+            controller.setVolume(target);
+            return true;
+        }
+        return verticalDelta != 0; // at the limit: still consume while hovering
     }
 
     // ---------------------------------------------------------------- album art
@@ -623,7 +667,7 @@ public final class YtmHud {
     private static YTMState withPosition(YTMState s, long posMs) {
         return new YTMState(s.playing, s.title, s.artist, s.album,
                 s.durationMs, Math.max(0, posMs), s.videoId, s.albumArt,
-                s.albumArtPng, s.loopMode, s.shuffle);
+                s.albumArtPng, s.loopMode, s.shuffle, s.volume, s.muted);
     }
 
     // ---------------------------------------------------------------- helpers

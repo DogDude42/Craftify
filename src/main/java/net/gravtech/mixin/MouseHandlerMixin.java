@@ -27,6 +27,16 @@ public abstract class MouseHandlerMixin {
     @Unique
     private double craftify$scaledY;
 
+    @Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
+    private void craftify$onScroll(long window, double deltaX, double deltaY,
+                                   CallbackInfo ci) {
+        // Scroll over the HUD = volume adjust; consume so the hotbar doesn't
+        // cycle while the user is tuning volume.
+        if (YtmHud.onMouseScrolled(deltaY)) {
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "onButton", at = @At("HEAD"), cancellable = true)
     private void craftify$onButton(long window, MouseButtonInfo info, int action,
                                    CallbackInfo ci) {

@@ -337,10 +337,11 @@
       return;
     }
     if (msg && msg.type === "craftify-ytm-command") {
-      const action = msg.command && msg.command.action;
+      const command = msg.command || {};
+      const action = command.action;
       const fn = COMMANDS[action];
       if (fn) {
-        setTimeout(() => { fn(); sendState(); }, 0);
+        setTimeout(() => { fn(command); sendState(); }, 0);
         sendResponse({ ok: true });
       } else {
         sendResponse({ ok: false, error: "unsupported: " + action });

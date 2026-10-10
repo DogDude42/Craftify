@@ -50,11 +50,15 @@ public final class YTMWebController {
         public final String loopMode;
         /** Shuffle toggle state. */
         public final boolean shuffle;
+        /** Player volume 0..100 (-1 = unknown). */
+        public final int volume;
+        /** Muted state. */
+        public final boolean muted;
 
         public YTMState(boolean playing, String title, String artist, String album,
-                         long durationMs, long positionMs, String videoId,
-                         String albumArt, String albumArtPng,
-                         String loopMode, boolean shuffle) {
+                        long durationMs, long positionMs, String videoId,
+                        String albumArt, String albumArtPng,
+                        String loopMode, boolean shuffle, int volume, boolean muted) {
             this.playing = playing;
             this.title = title;
             this.artist = artist;
@@ -66,6 +70,8 @@ public final class YTMWebController {
             this.albumArtPng = albumArtPng == null ? "" : albumArtPng;
             this.loopMode = loopMode == null || loopMode.isEmpty() ? "NONE" : loopMode;
             this.shuffle = shuffle;
+            this.volume = volume;
+            this.muted = muted;
         }
     }
 
@@ -203,7 +209,9 @@ public final class YTMWebController {
                     getAsString(obj, "albumArt", ""),
                     getAsString(obj, "albumArtPng", ""),
                     getAsString(obj, "loopMode", "NONE"),
-                    getAsBool(obj, "shuffle", false));
+                    getAsBool(obj, "shuffle", false),
+                    (int) getAsLong(obj, "volume", -1L),
+                    getAsBool(obj, "muted", false));
             this.lastState = state;
             if (firstStateLogged == false) {
                 firstStateLogged = true;
@@ -281,6 +289,9 @@ public final class YTMWebController {
     public void sendCommand(String action) {
         sendCommand(action, null);
     }
+
+    public void toggleMute() { sendCommand("mute", null); }
+    public void unmute() { sendCommand("unmute", null); }
 
     public void seek(long position) {
         JsonObject o = new JsonObject();
