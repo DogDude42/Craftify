@@ -1,9 +1,9 @@
 plugins {
-    id("net.fabricmc.fabric-loom") version "1.18-SNAPSHOT"
+    id("net.fabricmc.fabric-loom") version "1.19-SNAPSHOT"
 }
 
 group = "net.gravtech"
-version = "1.0.0+26.1.2"
+version = "1.0.0+26.3"
 
 repositories {
     // Loom adds essential repositories automatically
@@ -11,13 +11,13 @@ repositories {
 }
 
 dependencies {
-    minecraft("com.mojang:minecraft:26.1.2")
-    implementation("net.fabricmc:fabric-loader:0.19.5")
-    implementation("net.fabricmc.fabric-api:fabric-api:0.155.3+26.1.2")
+    minecraft("com.mojang:minecraft:26.3")
+    implementation("net.fabricmc:fabric-loader:0.20.1")
+    implementation("net.fabricmc.fabric-api:fabric-api:0.165.0+26.3")
 
     // ModMenu integration (compileOnly; entrypoint is only invoked when
     // ModMenu is installed alongside)
-    compileOnly("com.terraformersmc:modmenu:18.0.2")
+    compileOnly("com.terraformersmc:modmenu:21.0.0")
 }
 
 // No splitEnvironmentSourceSets: this mod is 100% client-only

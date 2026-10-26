@@ -2,10 +2,10 @@ package net.gravtech;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.glfw.GLFW;
 import net.gravtech.ui.YtmHud;
 
 /**
@@ -31,16 +31,16 @@ public class CraftifyClient implements ClientModInitializer {
 
         toggleHudKey = KeyMappingHelper.registerKeyMapping(
                 new KeyMapping("key.craftify.toggle_hud",
-                        GLFW.GLFW_KEY_H, category));
+                        InputConstants.KEY_H, category));
         togglePlayingKey = KeyMappingHelper.registerKeyMapping(
                 new KeyMapping("key.craftify.toggle_playing",
-                        GLFW.GLFW_KEY_UNKNOWN, category));
+                        0, category)); // 0 = unbound (InputConstants.UNKNOWN)
         skipForwardKey = KeyMappingHelper.registerKeyMapping(
                 new KeyMapping("key.craftify.skip_forward",
-                        GLFW.GLFW_KEY_UNKNOWN, category));
+                        0, category)); // 0 = unbound (InputConstants.UNKNOWN)
         skipPreviousKey = KeyMappingHelper.registerKeyMapping(
                 new KeyMapping("key.craftify.skip_previous",
-                        GLFW.GLFW_KEY_UNKNOWN, category));
+                        0, category)); // 0 = unbound (InputConstants.UNKNOWN)
 
         YtmHud.register();
         Craftify.LOGGER.info("Craftify HUD registered");
@@ -54,7 +54,7 @@ public class CraftifyClient implements ClientModInitializer {
                         literal("craftify")
                     .executes(ctx -> {
                         Minecraft.getInstance().execute(() ->
-                                Minecraft.getInstance().setScreen(
+                                Minecraft.getInstance().gui.setScreen(
                                         new net.gravtech.ui.ConfigScreen(null)));
                         return 1;
                     })
